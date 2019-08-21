@@ -435,7 +435,7 @@ def main():
     Q = sparse.diags([5.0, 5.0, 10.0, 1.0])         # weight matrix for state
     # QN = Q
     QN = sparse.diags([100.0, 100.0, 100.0, 10.0])   # weight matrix for terminal state
-    R = sparse.diags([0.1, 0.1])                      # weight matrix for control input
+    R = sparse.diags([50, 50])                      # weight matrix for control input
     # R_before = 10*sparse.eye(nu)                    # weight matrix for control input
 
     # ========== Simulation Setup ==========
