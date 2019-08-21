@@ -256,6 +256,92 @@ def mpc_(Ad_mat, Bd_mat, gd_mat, x_vec, Xr, Q, QN, R, N, lb_x, ub_x, lb_y, ub_y,
 
     return res
 
+def mpc__(Ad_list, Bd_list, gd_list, x_vec, Xr, Q, QN, R, N, xmin, xmax, umin, umax):
+    """
+    Initialize Nonlinear Dynamics with Shooting Method
+
+    """
+    # ========== Cast MPC problem to a QP: x = (x(0),x(1),...,x(N),u(0),...,u(N-1)) ==========
+    nx = Ad_list[0].shape[0]
+    nu = Bd_list[0].shape[1]
+
+    # ----- quadratic objective -----
+    P = sparse.block_diag([sparse.kron(sparse.eye(N), Q), QN,
+                        sparse.kron(sparse.eye(N), R)]).tocsc()
+
+    # ----- linear objective -----
+    # xr_vec = np.squeeze(xr, axis=1)
+    # q = np.hstack([np.kron(np.ones(N), -Q.dot(xr)), -QN.dot(xr),
+    #               np.zeros(N*nu)])
+    # q = np.hstack([np.kron(np.ones(N), -Q.dot(xr_vec)), -QN.dot(xr_vec),
+    #               np.zeros(N*nu)])
+
+    q = -Q.dot(Xr[:,0])                                    # index 0
+    for ii in range(N-1):
+        q = np.hstack([q, -Q.dot(Xr[:,ii+1])])             # index 1 ~ N-1
+    q = np.hstack([q, -QN.dot(Xr[:,-1]), np.zeros(N*nu)])  # index N
+
+    # ----- linear dynamics -----
+    Ax_Ad = sparse.csc_matrix(Ad_list[0])
+    Ax_diag = sparse.kron(sparse.eye(N+1),-sparse.eye(nx))
+    Bu_Bd = sparse.csc_matrix(Bd_list[0])
+    
+    for i in range(N-1):
+        Ad = sparse.csc_matrix(Ad_list[i+1])
+        Bd = sparse.csc_matrix(Bd_list[i+1])
+        Ax_Ad = sparse.block_diag([Ax_Ad, Ad])
+        Bu_Bd = sparse.block_diag([Bu_Bd, Bd])
+
+    Ax_Ad_top = sparse.kron(np.ones(N+1), np.zeros((nx,nx)))
+    Ax_Ad_side = sparse.kron(np.ones((N,1)), np.zeros((nx,nx)))
+    Ax = Ax_diag + sparse.vstack([Ax_Ad_top, sparse.hstack([Ax_Ad, Ax_Ad_side])])
+    Bu_Bd_top = sparse.kron(np.ones(N), np.zeros((nx,nu)))
+    Bu = sparse.vstack([Bu_Bd_top, Bu_Bd])
+    Aeq = sparse.hstack([Ax, Bu])
+
+    leq = -x_vec # later ueq == leq
+    for i in range(N):
+        gd = np.squeeze(gd_list[i], axis=1) # from (N,1) to (N,)
+        leq = np.hstack([leq, -gd])
+    ueq = leq
+
+    # Original Code
+    # Ax = sparse.kron(sparse.eye(N+1),-sparse.eye(nx)) + sparse.kron(sparse.eye(N+1, k=-1), Ad_list[0])
+    # Bu = sparse.kron(sparse.vstack([sparse.csc_matrix((1, N)), sparse.eye(N)]), Bd_list[0])
+    # Aeq = sparse.hstack([Ax, Bu])
+    # gd = np.squeeze(gd_list[0], axis=1) # from (N,1) to (N,)
+    # leq = np.hstack([-x_vec, np.kron(np.ones(N), -gd)])
+    # ueq = leq
+
+    # ----- input and state constraints -----
+    Aineq = sparse.eye((N+1)*nx + N*nu)
+    lineq = np.hstack([np.kron(np.ones(N+1), xmin), np.kron(np.ones(N), umin)])
+    uineq = np.hstack([np.kron(np.ones(N+1), xmax), np.kron(np.ones(N), umax)])
+    # lineq = []
+    # uineq = []
+
+    # for i in range(len(lb_x)):
+    #     xmin = [lb_x[i], lb_y[i], -10, -np.pi]
+    #     xmax = [ub_x[i], ub_y[i],  10,  np.pi]
+    #     lineq = np.hstack([lineq, xmin])
+    #     uineq = np.hstack([uineq, xmax])
+    # lineq = np.hstack([lineq, np.kron(np.ones(N), umin)])
+    # uineq = np.hstack([uineq, np.kron(np.ones(N), umax)])
+
+    # ----- OSQP constraints -----
+    A = sparse.vstack([Aeq, Aineq]).tocsc()
+    lb = np.hstack([leq, lineq])
+    ub = np.hstack([ueq, uineq])
+
+    # ==========Create an OSQP object and Setup workspace ==========
+    prob = osqp.OSQP()
+    prob.setup(P, q, A, lb, ub, verbose=False, warm_start=True) # verbose: print output.
+
+    # Solve
+    res = prob.solve()
+
+    return res
+
 
 def main():
     # ===== Vehicle parameters =====
@@ -298,7 +384,7 @@ def main():
     x = np.array([[0.0],
                 [0.0],
                 [5.0],
-                [np.deg2rad(100)]])    #  [X; Y; V; Yaw]
+                [np.deg2rad(0)]])    #  [X; Y; V; Yaw]
     u = np.array([[0*math.pi/180],
                 [0.01]])               #  [steer; accel]
 
@@ -309,7 +395,7 @@ def main():
     nx = x.shape[0]
     nu = u.shape[0]
 
-    # Initialize Predictive States and Controls
+    # ========== Initialize Predictive States and Controls ==========
     u_noise = np.zeros((nu, 1))
     mu_steer = 0.0
     sigma_steer = np.deg2rad(1)
@@ -320,14 +406,16 @@ def main():
     for i in range(N):
         u_noise[0] = np.random.normal(mu_steer, sigma_steer, 1)
         u_noise[1] = np.random.normal(mu_accel, sigma_accel, 1)
-        pred_u[:,i] = np.transpose(u0 + u_noise)
-    pred_u[:,-1] = pred_u[:,-2] # append last control input
+        # pred_u[:,i] = np.transpose(u0 + u_noise)
+        pred_u[:,i] = np.transpose(u0)
+    pred_u[:,-1] = pred_u[:,-2] # append last pred_u for N+1
 
     pred_x = np.zeros((nx, N+1))
     pred_x[:,0] = x0.T
-    for i in range(1, N):
-        x0 = vehicle.update_kinematic_model(x0, pred_u[:,i])
-        pred_x[:,i] = x0.T
+    for i in range(0, N):
+        # x0 = vehicle.update_kinematic_model(x0, pred_u[:,i])
+        # pred_x[:,i] = x0.T
+        pred_x[:,i+1] = x0.T
 
     # ========== Reference state ==========
     # xr = np.array([[5.0],
@@ -336,22 +424,17 @@ def main():
     #                 [np.deg2rad(90)]])  #  [X; Y; vel_x; Yaw]
     Xr, _ = reference_search(path_x, path_y, pred_x, dt, N)
 
-    # Discrete time model of the vehicle lateral dynamics
-    # Ad_mat, Bd_mat, gd_mat = [], [], []
-    # for i in range(N+1):
-    Ad_mat, Bd_mat, gd_mat = vehicle.get_kinematics_model(x, u)
-
     # ========== Constraints ==========
     umin = np.array([-np.deg2rad(15), -3.]) # u : [steer, accel]
     umax = np.array([ np.deg2rad(15),  1.])
-    xmin = np.array([-np.inf,-np.inf, -100., -np.pi]) #  [X; Y; vel_x; Yaw]
-    xmax = np.array([ np.inf, np.inf,  100.,  np.pi])
+    xmin = np.array([-np.inf,-np.inf, -100., -2*np.pi]) #  [X; Y; vel_x; Yaw]
+    xmax = np.array([ np.inf, np.inf,  100.,  2*np.pi])
 
     # ========== Objective function ==========
     # MPC weight matrix
-    Q = sparse.diags([1.0, 1.0, 5.0, 10.0])         # weight matrix for state
+    Q = sparse.diags([5.0, 5.0, 10.0, 1.0])         # weight matrix for state
     # QN = Q
-    QN = sparse.diags([10.0, 10.0, 50.0, 100.0])   # weight matrix for terminal state
+    QN = sparse.diags([100.0, 100.0, 100.0, 10.0])   # weight matrix for terminal state
     R = sparse.diags([0.1, 0.1])                      # weight matrix for control input
     # R_before = 10*sparse.eye(nu)                    # weight matrix for control input
 
@@ -368,32 +451,32 @@ def main():
         # Discrete time model of the vehicle lateral dynamics
 
         # Reference states
-        # xr = np.array([[5.0],
-        #                [10.0],
-        #                [10.0],
-        #                [np.deg2rad(90)]])  #  [X; Y; vel_x; Yaw]
-        # Xr, _ = reference_search(path_x, path_y, x, dt, N)
         Xr, _ = reference_search(path_x, path_y, pred_x, dt, N)
+        plt.plot(pred_x[0,:], pred_x[1,:], "y")
+
+        print("x_vec :", x_vec)
+        print("pred_x[:,0] :", pred_x[:,0])
 
         # Discrete time model of the vehicle lateral dynamics
-        Ad_mat, Bd_mat, gd_mat = vehicle.get_kinematics_model(x, u)
+        Ad_list, Bd_list, gd_list = [], [], []
+        for ii in range(N):
+            Ad, Bd, gd = vehicle.get_kinematics_model(pred_x[:,ii], pred_u[:,ii])
+            Ad_list.append(Ad)
+            Bd_list.append(Bd)
+            gd_list.append(gd)
 
         # ========== Constraints ==========
         umin = np.array([-np.deg2rad(15), -3.]) # u : [steer, accel]
         umax = np.array([ np.deg2rad(15),  1.])
-        xmin = np.array([-np.inf,-np.inf, -100., -np.pi]) #  [X; Y; vel_x; Yaw]
-        xmax = np.array([ np.inf, np.inf,  100.,  np.pi])
-
-        # ========== Objective function ==========
-        # MPC weight matrix
-        Q = sparse.diags([1.0, 1.0, 5.0, 10.0])         # weight matrix for state
-        # QN = Q
-        QN = sparse.diags([10.0, 10.0, 50.0, 50.0])   # weight matrix for terminal state
-        R = sparse.diags([0.1, 0.1])                      # weight matrix for control input
-        # R_before = 10*sparse.eye(nu)                    # weight matrix for control input
+        xmin = np.array([-np.inf,-np.inf, -100., -2*np.pi]) #  [X; Y; vel_x; Yaw]
+        xmax = np.array([ np.inf, np.inf,  100.,  2*np.pi])
 
         # Solve MPC
-        res = mpc(Ad_mat, Bd_mat, gd_mat, x_vec, Xr, Q, QN, R, N, xmin, xmax, umin, umax)
+        # res = mpc(Ad_mat, Bd_mat, gd_mat, x_vec, Xr, Q, QN, R, N, xmin, xmax, umin, umax)
+        if i <= -1:
+            res = mpc(Ad_list[0], Bd_list[0], gd_list[0], x_vec, Xr, Q, QN, R, N, xmin, xmax, umin, umax)
+        else:
+            res = mpc__(Ad_list, Bd_list, gd_list, x_vec, Xr, Q, QN, R, N, xmin, xmax, umin, umax)
 
         # Check solver status
         if res.info.status != 'solved':
@@ -407,24 +490,26 @@ def main():
         toc = time.time()
         print("ctrl :", ctrl)
 
-        # for Plotting predictive states
+        # Predictive States and Actions
         sol_state = res.x[:-N*nu]
+        sol_action = res.x[-N*nu:]
         
         for ii in range((N+1)*nx):
-            if ii % 4 == 0:
-                pred_x[0,ii//4] = sol_state[ii]
-            elif ii % 4 == 1:
-                pred_x[1,ii//4] = sol_state[ii]
-            elif ii % 4 == 2:
-                pred_x[2,ii//4] = sol_state[ii]
+            if ii % nx == 0:
+                pred_x[0,ii//nx] = sol_state[ii]
+            elif ii % nx == 1:
+                pred_x[1,ii//nx] = sol_state[ii]
+            elif ii % nx == 2:
+                pred_x[2,ii//nx] = sol_state[ii]
             else: # ii % 4 == 3:
-                pred_x[3,ii//4] = sol_state[ii]
+                pred_x[3,ii//nx] = sol_state[ii]
 
-        print("pred_x[:,0] :")
-        print(pred_x[:,0])
-        print("x0")
-        print(x)
-
+        for jj in range((N)*nu):
+            if jj % nu == 0:
+                pred_u[0,jj//nu] = sol_action[jj]
+            else: # jj % nu == 1
+                pred_u[1,jj//nu] = sol_action[jj]
+        pred_u[:,-1] = pred_u[:,-2] # append last control
 
         # Plot
         print("Current   x :", x[0], "y :", x[1], "v :", x[2], "yaw :", x[3])
@@ -448,13 +533,35 @@ def main():
         
         # Update States
         u = np.expand_dims(ctrl, axis=1) # from (N,) to (N,1)
-        x_next = np.matmul(Ad_mat, x) + np.matmul(Bd_mat, u) + gd_mat
+        x_next = np.matmul(Ad_list[0], x) + np.matmul(Bd_list[0], u) + gd_list[0]
 
         plt_states[:,i] = x.T
         plt_actions[:,i] = u.T
 
         x = x_next
         x_vec = np.squeeze(x, axis=1) # (N,) shape for QP solver, NOT (N,1).
+
+        # Update Predictive States and Actions
+        temp_pred_x = pred_x
+        temp_pred_u = pred_u
+        # index 0
+        pred_x[:,0] = x_next.T                   
+        pred_u[:,0] = temp_pred_u[:,1] # before u.T
+        # index 1 ~ N-2
+        for ii in range(0, N-2):
+            pred_x[:,ii+1] = temp_pred_x[:,ii+2]
+            pred_u[:,ii+1] = temp_pred_u[:,ii+2]
+        # index N-1
+        pred_x[:,-2] = temp_pred_x[:,N]
+        pred_u[:,-2] = temp_pred_u[:,N-1]
+
+        # index N
+        # append last state using last A, B matrix and last pred state
+        # append last control with last pred control
+        last_state = np.expand_dims(temp_pred_x[:,N], axis=1) # from (N,) to (N,1)
+        last_control = np.expand_dims(temp_pred_u[:,N-1], axis=1)
+        pred_x[:,-1] = np.transpose(vehicle.update_kinematic_model(last_state, last_control))
+        pred_u[:,-1] = pred_u[:,N-1]
 
 
         # if check_goal(x, xr, goal_dist=1, stop_speed=5):
