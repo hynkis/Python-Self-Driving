@@ -332,6 +332,13 @@ class Vehicle_Dynamics(object):
         # return Ad, Bd, gd, alpha_f, alpha_r, Fx_f
 
     
+class Vehicle_Kinematics(object):
+    def __init__(self, l_f=1.25, l_r=1.40, dt = 0.02):
+        self.l_f = l_f
+        self.l_r = l_r
+        self.wheelbase = l_f + l_r
+        self.dt = dt
+
     def get_kinematics_model(self, x, u):
         """
         States  : [x; y; v; yaw]
