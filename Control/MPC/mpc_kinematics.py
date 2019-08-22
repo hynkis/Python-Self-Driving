@@ -1,3 +1,11 @@
+"""
+Date : 2019.08.21
+Author : Hyunki Seong
+
+Python MPC
+    - based on Kinematics model
+    - using current linearized matrix
+"""
 import osqp
 import numpy as np
 import scipy as sp

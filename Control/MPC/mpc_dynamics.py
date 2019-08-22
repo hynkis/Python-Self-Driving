@@ -1,3 +1,12 @@
+"""
+Date : 2019.08.22
+Author : Hyunki Seong
+
+Python MPC
+    - based on Dynamics model
+    - using predictive linearized matrix
+"""
+
 import osqp
 import numpy as np
 import scipy as sp
@@ -9,7 +18,7 @@ import time
 import sys
 sys.path.append("../../Vehicle_Dynamics/")
 try:
-    import vehicle_dynamics
+    import vehicle_models
     from visualization_vehicle import plot_car
 except:
     raise
@@ -358,19 +367,10 @@ def main():
     A_f = 2.0
     C_roll = 0.015
 
-    vehicle = vehicle_dynamics.Vehicle_Dynamics(m=m,
-                                                l_f=l_f,
-                                                l_r=l_r,
-                                                width = width,
-                                                length = length,
-                                                turning_circle=turning_circle,
-                                                C_d = C_d,
-                                                A_f = A_f,
-                                                C_roll = C_roll,
-                                                dt = dt)
+    vehicle = vehicle_models.Vehicle_Kinematics(l_f=l_f, l_r=l_r, dt = dt) # Vehicle Kinematic Model
 
     # ========== MPC parameters ==========
-    N = 100 # Prediction horizon
+    N = 50 # Prediction horizon
 
     # ========== Initialization ==========
     # Path
