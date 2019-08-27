@@ -50,7 +50,7 @@ class Vehicle_Dynamics(object):
         self.dt = dt                                              # sampling rate. for discritization. [sec]
 
 
-    def vehicle_dynamics(self, x, u):
+    def get_dynamics_model(self, x, u):
         """
         ===== Discretize Linearized Dynamics model =====
 
@@ -133,8 +133,6 @@ class Vehicle_Dynamics(object):
         # B_lat_r = 13
         # C_lat_r = 2
         # D_lat_r = Fz_r * 1.2 * 1000
-
-
 
         """
         ===== Discretize Linearized Dynamics model =====
@@ -328,10 +326,138 @@ class Vehicle_Dynamics(object):
         # normalize angle
         # x_k1[2] = normalize_angle(x_k1[2])
 
-        return Ad, Bd, gd, alpha_f, alpha_r
-        # return Ad, Bd, gd, alpha_f, alpha_r, Fx_f
+        return Ad, Bd, gd
+        # return Ad, Bd, gd, alpha_f, alpha_r
 
-    
+    def update_dynamics_model(self, x, u):
+        """
+        ===== Discretize Linearized Dynamics model =====
+
+        Inputs:
+            x : states,  [X; Y; Yaw; vel_x; vel_y; Yaw_rate]
+            u : actions, [steer; traction_accel]
+
+        Outputs:
+            x_next  : next_states.
+            alpha_f : side slip on front axle
+            alpha_r : side slip on rear axle
+        """
+        # ===== Model parameters ===== #
+
+        # num of state, action
+        nx = 6
+        nu = 2
+
+        m = self.m  # i30
+
+        width = self.width
+        length = self.length
+
+        l_f = self.l_f
+        l_r = self.l_r
+        wheelbase = self.wheelbase
+        turning_circle = self.turning_circle
+        max_steer = self.max_steer
+
+        Iz = self.Iz
+
+        # Iw = 1.8  # wheel inertia
+        # rw = 0.3  # wheel radius
+
+        roh = self.roh               # density of air       [kg/m3]
+        C_d = self.C_d               # drag coefficient
+        A_f = self.A_f               # vehicle frontal area [m2]
+        C_roll = self.C_roll         # rolling resistance coefficient
+
+        dt = self.dt                 # sampling time.       [sec]
+
+        
+        """
+        Pacejka lateral tire model params
+        
+        """
+        Fz_f = 9.81 * (m * l_r/wheelbase) * 0.001 # vertical force at front axle. [kN]
+
+        a_lat_f = [-22.1, 1011, 1078, 1.82, 0.208, 0.000, -0.354, 0.707] # for Fy
+        C_lat_f = 1.30
+        D_lat_f = a_lat_f[0]*Fz_f**2 + a_lat_f[1]*Fz_f
+        BCD_lat_f = a_lat_f[2]*math.sin(a_lat_f[3]*math.atan(a_lat_f[4]*Fz_f)) # before, atan
+        B_lat_f = BCD_lat_f/(C_lat_f*D_lat_f)
+        E_lat_f = a_lat_f[5]*Fz_f**2 + a_lat_f[6]*Fz_f + a_lat_f[7]
+
+        Fz_r = 9.81 * (m * l_f/wheelbase) * 0.001 # vertical force at rear axle. [kN]
+
+        a_lat_r = [-22.1, 1011, 1078, 1.82, 0.208, 0.000, -0.354, 0.707] # for Fy
+        C_lat_r = 1.30
+        D_lat_r = a_lat_r[0]*Fz_r**2 + a_lat_r[1]*Fz_r
+        BCD_lat_r = a_lat_r[2]*math.sin(a_lat_r[3]*math.atan(a_lat_r[4]*Fz_r)) # berore, atan
+        B_lat_r = BCD_lat_r/(C_lat_r*D_lat_r)
+        E_lat_r = a_lat_r[5]*Fz_r**2 + a_lat_r[6]*Fz_r + a_lat_r[7]
+
+        """
+        ===== Discretize Linearized Dynamics model =====
+        """
+
+        # normalize angle
+        # x[2] = normalize_angle(x[2])
+
+        # Avoiding zero denominator (for slip angle, expm in discretization procedure)
+        # before 19.07.31, 0.5 m/s
+        if x[3] >=0 and x[3] < 0.5:
+            # x[3] = 0.0
+            x[4] = 0.       # v_y
+            x[5] = 0.       # yaw_rate
+            u[0] = 0.       # steer
+            if x[3] < 0.3:
+                x[3] = 0.3  # v_x
+            print("Avoiding zero denominator")
+
+        if x[3] > -0.5 and x[3] < 0:
+            # x[3] = 0.
+            x[4] = 0.
+            x[5] = 0.
+            u[0] = 0.
+            if x[3] > -0.3:
+                x[3] = -0.3
+            print("Avoiding zero denominator")
+
+        # States
+        yaw =         x[2][0]  # [0] for scalar data
+        v_x =         x[3][0]
+        v_y =         x[4][0]
+        yaw_rate =    x[5][0]
+
+        steer =       u[0][0]
+        accel_track = u[1][0]
+
+        # Dynamics model
+        # Slip angle [deg]
+        alpha_f = np.rad2deg(-math.atan2( l_f*yaw_rate + v_y,v_x) + steer)
+        alpha_r = np.rad2deg(-math.atan2(-l_r*yaw_rate + v_y,v_x))
+
+        # Lateral force (front & rear)
+        # Fy_f = D_lat_f * math.sin(C_lat_f * math.atan2(B_lat_f * alpha_f, 1)) # before was atan
+        # Fy_r = D_lat_r * math.sin(C_lat_r * math.atan2(B_lat_r * alpha_r, 1)) # before was atan
+        Fy_f = D_lat_f * math.sin(C_lat_f * math.atan(B_lat_f * alpha_f))
+        Fy_r = D_lat_r * math.sin(C_lat_r * math.atan(B_lat_r * alpha_r))
+
+        # Longitudinal force
+
+        # for both forward and backward driving.
+        R_roll = C_roll * m * 9.81 * np.sign(v_x)               # rolling resistance. [N] f*(Fzf+Fzr) = f*(mg)
+        F_aero = 0.5*roh*C_d*A_f*v_x**2 * np.sign(v_x)          # aero dynamics drag. [N] 0.5*rho*cd*A.
+        Fx_f = m*accel_track - F_aero - R_roll
+
+        # Next state
+        x_next = np.array([[v_x*math.cos(yaw) - v_y*math.sin(yaw)],
+                            [v_y*math.cos(yaw) + v_x*math.sin(yaw)],
+                            [yaw_rate],
+                            [1./m*(Fx_f*math.cos(steer) - Fy_f*math.sin(steer) + m*v_y*yaw_rate)],
+                            [1./m*(Fx_f*math.sin(steer) + Fy_r + Fy_f*math.cos(steer) - m*v_x*yaw_rate)],
+                            [1./Iz*(Fx_f*l_f*math.sin(steer) + Fy_f*l_f*math.cos(steer)- Fy_r*l_r)]])
+
+        return x_next, alpha_f, alpha_r
+
 class Vehicle_Kinematics(object):
     def __init__(self, l_f=1.25, l_r=1.40, dt = 0.02):
         self.l_f = l_f
@@ -370,7 +496,7 @@ class Vehicle_Kinematics(object):
         return A, B, C
 
 
-    def update_kinematic_model(self, x, u):
+    def update_kinematics_model(self, x, u):
         """
         Update Kinematic Model.
             States  : [x; y; v; yaw]
@@ -503,13 +629,12 @@ def main():
         TT[i] = dt * i
         UU[:,i] = u.T
 
-        Ad, Bd, gd, alpha_f, alpha_r = vehicle.vehicle_dynamics(x, u)
-        # Ad, Bd, gd, alpha_f, alpha_r, Fx_f = vehicle.vehicle_dynamics(x, u)
+        Ad, Bd, gd = vehicle.get_dynamics_model(x, u)
+        _, alpha_f, alpha_r = vehicle.update_dynamics_model(x, u)
 
         x_k = x
         u_k = u
         x_k1 = np.matmul(Ad, x_k) + np.matmul(Bd, u_k) + gd    # shape: (nx+1, 1)
-        # x_k1 = np.matmul(Ad, x_k) + np.matmul(Bd, u_k)
 
         # normalize angle (Better not to normalize.)
         # x_k1[2] = normalize_angle(x_k1[2])
@@ -545,7 +670,7 @@ def main():
         # print("Error yaw :", np.rad2deg(error_yaw))
 
         plt.cla()
-        plt.plot(XX[0,:], XX[1,:], "-b", label="Hybrid A* path")
+        plt.plot(XX[0,:i], XX[1,:i], "-b", label="Hybrid A* path")
         plt.grid(True)
         plt.axis("equal")
         plot_car(x_k[0], x_k[1], x_k[2], steer=u_k[0])

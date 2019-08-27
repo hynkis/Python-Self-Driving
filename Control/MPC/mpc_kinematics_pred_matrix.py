@@ -370,7 +370,7 @@ def main():
     vehicle = vehicle_models.Vehicle_Kinematics(l_f=l_f, l_r=l_r, dt = dt) # Vehicle Kinematic Model
 
     # ========== MPC parameters ==========
-    N = 50 # Prediction horizon
+    N = 100 # Prediction horizon
 
     # ========== Initialization ==========
     # Path
@@ -384,7 +384,7 @@ def main():
     x = np.array([[0.0],
                 [0.0],
                 [5.0],
-                [np.deg2rad(0)]])    #  [X; Y; V; Yaw]
+                [np.deg2rad(30)]])    #  [X; Y; V; Yaw]
     u = np.array([[0*math.pi/180],
                 [0.01]])               #  [steer; accel]
 
@@ -560,7 +560,7 @@ def main():
         # append last control with last pred control
         last_state = np.expand_dims(temp_pred_x[:,N], axis=1) # from (N,) to (N,1)
         last_control = np.expand_dims(temp_pred_u[:,N-1], axis=1)
-        pred_x[:,-1] = np.transpose(vehicle.update_kinematic_model(last_state, last_control))
+        pred_x[:,-1] = np.transpose(vehicle.update_kinematics_model(last_state, last_control))
         pred_u[:,-1] = pred_u[:,N-1]
 
 
@@ -570,63 +570,3 @@ def main():
     
 if __name__ == "__main__":
     main()
-
-
-"""
-
-    
-
-# Plot result
-# Figure 1
-fig1 = plt.figure()
-ax1 = fig1.add_subplot(2,3,1)
-ax2 = fig1.add_subplot(2,3,2)
-ax3 = fig1.add_subplot(2,3,3)
-ax4 = fig1.add_subplot(2,3,4)
-ax5 = fig1.add_subplot(2,3,5)
-ax6 = fig1.add_subplot(2,3,6)
-
-ax1.set_title("X")
-ax2.set_title("Y")
-ax3.set_title("Yaw")
-ax4.set_title("Vel_x")
-ax5.set_title("Vel_y")
-ax6.set_title("Yaw_rate")
-
-ax1.plot(plt_tic, plt_x_1)
-ax2.plot(plt_tic, plt_x_2)
-ax3.plot(plt_tic, plt_x_3)
-ax4.plot(plt_tic, plt_x_4)
-ax5.plot(plt_tic, plt_x_5)
-ax6.plot(plt_tic, plt_x_6)
-
-ax1.grid()
-ax2.grid()
-ax3.grid()
-ax4.grid()
-ax5.grid()
-ax6.grid()
-
-# Figure 2
-fig2 = plt.figure()
-ax1 = fig2.add_subplot(1,3,1)
-ax2 = fig2.add_subplot(1,3,2)
-ax3 = fig2.add_subplot(1,3,3)
-
-ax1.set_title("Steer")
-ax2.set_title("Accel")
-ax3.set_title("X-Y plot")
-
-ax1.plot(plt_tic, plt_u_1)
-ax2.plot(plt_tic, plt_u_2)
-ax3.plot(plt_x_1, plt_x_2)
-
-
-ax1.grid()
-ax2.grid()
-ax3.grid()
-ax3.axis('square')
-
-plt.show()
-
-"""

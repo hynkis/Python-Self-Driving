@@ -17,7 +17,7 @@ import time
 import sys
 sys.path.append("../../Vehicle_Dynamics/")
 try:
-    import vehicle_dynamics
+    import vehicle_models
     from visualization_vehicle import plot_car
 except:
     raise
@@ -280,16 +280,7 @@ def main():
     A_f = 2.0
     C_roll = 0.015
 
-    vehicle = vehicle_dynamics.Vehicle_Dynamics(m=m,
-                                                l_f=l_f,
-                                                l_r=l_r,
-                                                width = width,
-                                                length = length,
-                                                turning_circle=turning_circle,
-                                                C_d = C_d,
-                                                A_f = A_f,
-                                                C_roll = C_roll,
-                                                dt = dt)
+    vehicle = vehicle_models.Vehicle_Kinematics(l_f=l_f, l_r=l_r, dt = dt)
 
     # ========== MPC parameters ==========
     N = 100 # Prediction horizon
@@ -306,7 +297,7 @@ def main():
     x = np.array([[0.0],
                 [0.0],
                 [5.0],
-                [np.deg2rad(100)]])    #  [X; Y; V; Yaw]
+                [np.deg2rad(30)]])    #  [X; Y; V; Yaw]
     u = np.array([[0*math.pi/180],
                 [0.01]])               #  [steer; accel]
 
@@ -334,7 +325,7 @@ def main():
     pred_x = np.zeros((nx, N+1))
     pred_x[:,0] = x0.T
     for i in range(1, N):
-        x0 = vehicle.update_kinematic_model(x0, pred_u[:,i])
+        x0 = vehicle.update_kinematics_model(x0, pred_u[:,i])
         pred_x[:,i] = x0.T
 
     # ========== Reference state ==========
