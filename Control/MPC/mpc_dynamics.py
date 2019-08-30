@@ -5,6 +5,10 @@ Author : Hyunki Seong
 Python MPC
     - based on Dynamics model
     - using predictive linearized matrix
+
+TODO (19.08.30)
+    - Modify Vehicle model (from front wheel to rear wheel)
+    - Check code block of OSQP
 """
 
 import osqp
@@ -170,6 +174,7 @@ def mpc(Ad_list, Bd_list, gd_list, x_vec, Xr, Q, QN, R, N, xmin, xmax, umin, uma
     # xr_vec = np.squeeze(xr, axis=1)
     # q = np.hstack([np.kron(np.ones(N), -Q.dot(xr)), -QN.dot(xr),
     #               np.zeros(N*nu)])
+    # xr_vec = Xr[:,0]
     # q = np.hstack([np.kron(np.ones(N), -Q.dot(xr_vec)), -QN.dot(xr_vec),
     #               np.zeros(N*nu)])
 
@@ -263,14 +268,14 @@ def main():
     # ========== Initialization ==========
     # Path
     path_x = np.linspace(-10, 100, 100/0.5)
-    path_y = np.linspace(-10, 100, 100/0.5) * 0.0 - 5.0
+    path_y = np.linspace(-10, 100, 100/0.5) * 0.0 - 0.0
 
     # Initial state
     # States  : [X; Y; Yaw; V_x; V_y; Yaw_rate]
     # Actions : [steer; accel]
     x = np.array([[0.0],
                 [0.0],
-                [np.deg2rad(10)],
+                [np.deg2rad(0)],
                 [20.0],
                 [0.0],
                 [np.deg2rad(0)]])   # [X; Y; Yaw; V_x; V_y; Yaw_rate]
@@ -284,12 +289,12 @@ def main():
     nx = x.shape[0]
     nu = u.shape[0]
 
-    # ========== Initialize Predictive States and Controls ==========
-    u_noise = np.zeros((nu, 1))
-    mu_steer = 0.0
-    sigma_steer = np.deg2rad(1)
-    mu_accel = 0.0
-    sigma_accel = 0.1
+    # ========== Initialial guess states and controls ==========
+    # u_noise = np.zeros((nu, 1))
+    # mu_steer = 0.0
+    # sigma_steer = np.deg2rad(1)
+    # mu_accel = 0.0
+    # sigma_accel = 0.1
 
     pred_u = np.zeros((nu, N+1))
     for i in range(N):
@@ -303,6 +308,7 @@ def main():
     pred_x[:,0] = x0.T
     for i in range(0, N):
         x0, _, _ = vehicle.update_dynamics_model(x0, pred_u[:,i]) # get x_k+1 from x_k and u_k-1
+        x0[2,:] = vehicle_models.normalize_angle(x0[2,:])
         pred_x[:,i+1] = x0.T
 
     # ========== Reference state ==========
