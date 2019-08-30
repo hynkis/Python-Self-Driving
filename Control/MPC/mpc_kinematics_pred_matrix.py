@@ -370,7 +370,7 @@ def main():
     vehicle = vehicle_models.Vehicle_Kinematics(l_f=l_f, l_r=l_r, dt = dt) # Vehicle Kinematic Model
 
     # ========== MPC parameters ==========
-    N = 50 # Prediction horizon
+    N = 100 # Prediction horizon
 
     # ========== Initialization ==========
     # Path
@@ -383,7 +383,7 @@ def main():
     # Actions : [steer; accel]
     x = np.array([[0.0],
                 [0.0],
-                [5.0],
+                [20.0],
                 [np.deg2rad(0)]])    #  [X; Y; V; Yaw]
     u = np.array([[0*math.pi/180],
                 [0.01]])               #  [steer; accel]
@@ -404,25 +404,22 @@ def main():
 
     pred_u = np.zeros((nu, N+1))
     for i in range(N):
-        u_noise[0] = np.random.normal(mu_steer, sigma_steer, 1)
-        u_noise[1] = np.random.normal(mu_accel, sigma_accel, 1)
+        # u_noise[0] = np.random.normal(mu_steer, sigma_steer, 1)
+        # u_noise[1] = np.random.normal(mu_accel, sigma_accel, 1)
         # pred_u[:,i] = np.transpose(u0 + u_noise)
         pred_u[:,i] = np.transpose(u0)
     pred_u[:,-1] = pred_u[:,-2] # append last pred_u for N+1
 
     pred_x = np.zeros((nx, N+1))
     pred_x[:,0] = x0.T
+    x_k = np.copy(x0)  # if x_k = x0, x0 would be changed by update kinematic model
     for i in range(0, N):
-        # x0 = vehicle.update_kinematic_model(x0, pred_u[:,i])
-        # pred_x[:,i] = x0.T
-        pred_x[:,i+1] = x0.T
+        x_k1 = vehicle.update_kinematic_model(x_k, pred_u[:,i])
+        pred_x[:,i+1] = x_k1.T
+        x_k = x_k1
+        # pred_x[:,i+1] = x0.T
 
-    # ========== Reference state ==========
-    # xr = np.array([[5.0],
-    #                 [10.0],
-    #                 [10.0],
-    #                 [np.deg2rad(90)]])  #  [X; Y; vel_x; Yaw]
-    Xr, _ = reference_search(path_x, path_y, pred_x, dt, N)
+
 
     # ========== Constraints ==========
     umin = np.array([-np.deg2rad(15), -3.]) # u : [steer, accel]
@@ -432,10 +429,10 @@ def main():
 
     # ========== Objective function ==========
     # MPC weight matrix
-    Q = sparse.diags([5.0, 5.0, 10.0, 1.0])         # weight matrix for state
+    Q = sparse.diags([10.0, 10.0, 100.0, 10.0])         # weight matrix for state
     # QN = Q
-    QN = sparse.diags([100.0, 100.0, 100.0, 10.0])   # weight matrix for terminal state
-    R = sparse.diags([50, 50])                      # weight matrix for control input
+    QN = sparse.diags([100.0, 100.0, 1000.0, 100.0])   # weight matrix for terminal state
+    R = sparse.diags([1000, 100])                      # weight matrix for control input
     # R_before = 10*sparse.eye(nu)                    # weight matrix for control input
 
     # ========== Simulation Setup ==========
@@ -473,10 +470,11 @@ def main():
 
         # Solve MPC
         # res = mpc(Ad_mat, Bd_mat, gd_mat, x_vec, Xr, Q, QN, R, N, xmin, xmax, umin, umax)
-        if i <= -1:
-            res = mpc(Ad_list[0], Bd_list[0], gd_list[0], x_vec, Xr, Q, QN, R, N, xmin, xmax, umin, umax)
-        else:
-            res = mpc__(Ad_list, Bd_list, gd_list, x_vec, Xr, Q, QN, R, N, xmin, xmax, umin, umax)
+        # if i <= -1:
+        #     res = mpc(Ad_list[0], Bd_list[0], gd_list[0], x_vec, Xr, Q, QN, R, N, xmin, xmax, umin, umax)
+        # else:
+        #     res = mpc__(Ad_list, Bd_list, gd_list, x_vec, Xr, Q, QN, R, N, xmin, xmax, umin, umax)
+        res = mpc__(Ad_list, Bd_list, gd_list, x_vec, Xr, Q, QN, R, N, xmin, xmax, umin, umax)
 
         # Check solver status
         if res.info.status != 'solved':
@@ -525,6 +523,7 @@ def main():
         plt.plot(plt_states[0,:i], plt_states[1,:i], "-b", label="Drived") # plot from 0 to i
         plt.grid(True)
         plt.axis("equal")
+        plt.plot(x0[0], x0[1], "*g", label="Initial")
         plot_car(x[0], x[1], x[3], steer=u[0]) # plotting w.r.t. rear axle.
         plt.plot(pred_x[0,:], pred_x[1,:], "r")
         plt.plot(path_x, path_y, label="Path")
