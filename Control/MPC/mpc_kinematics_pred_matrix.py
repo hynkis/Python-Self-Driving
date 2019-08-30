@@ -414,7 +414,7 @@ def main():
     pred_x[:,0] = x0.T
     x_k = np.copy(x0)  # if x_k = x0, x0 would be changed by update kinematic model
     for i in range(0, N):
-        x_k1 = vehicle.update_kinematic_model(x_k, pred_u[:,i])
+        x_k1 = vehicle.update_kinematics_model(x_k, pred_u[:,i])
         pred_x[:,i+1] = x_k1.T
         x_k = x_k1
         # pred_x[:,i+1] = x0.T
@@ -559,7 +559,7 @@ def main():
         # append last control with last pred control
         last_state = np.expand_dims(temp_pred_x[:,N], axis=1) # from (N,) to (N,1)
         last_control = np.expand_dims(temp_pred_u[:,N-1], axis=1)
-        pred_x[:,-1] = np.transpose(vehicle.update_kinematic_model(last_state, last_control))
+        pred_x[:,-1] = np.transpose(vehicle.update_kinematics_model(last_state, last_control))
         pred_u[:,-1] = pred_u[:,N-1]
 
 
