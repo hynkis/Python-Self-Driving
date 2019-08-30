@@ -168,8 +168,11 @@ class Vehicle_Dynamics(object):
 
         # Dynamics model
         # Slip angle [deg]
-        alpha_f = np.rad2deg(-math.atan2( l_f*yaw_rate + v_y,v_x) + steer)
-        alpha_r = np.rad2deg(-math.atan2(-l_r*yaw_rate + v_y,v_x))
+        # alpha_f = np.rad2deg(-math.atan2( l_f*yaw_rate + v_y,v_x) + steer)
+        # alpha_r = np.rad2deg(-math.atan2(-l_r*yaw_rate + v_y,v_x))
+        
+        alpha_f = -math.atan2( l_f*yaw_rate + v_y,v_x) + steer
+        alpha_r = -math.atan2(-l_r*yaw_rate + v_y,v_x)
 
         # Lateral force (front & rear)
         # Fy_f = D_lat_f * math.sin(C_lat_f * math.atan2(B_lat_f * alpha_f, 1)) # before was atan
@@ -184,7 +187,7 @@ class Vehicle_Dynamics(object):
         F_aero = 0.5*roh*C_d*A_f*v_x**2 * np.sign(v_x)          # aero dynamics drag. [N] 0.5*rho*cd*A.
         Fx_f = m*accel_track - F_aero - R_roll
 
-        # Next state
+        # X dot
         f = np.array([[v_x*math.cos(yaw) - v_y*math.sin(yaw)],
                       [v_y*math.cos(yaw) + v_x*math.sin(yaw)],
                       [yaw_rate],
@@ -282,7 +285,7 @@ class Vehicle_Dynamics(object):
         gc = f - np.matmul(Ac, x) - np.matmul(Bc, u)
         
         # Discretize
-        # -- Exponential Matrix
+        # # -- Exponential Matrix
         # Bc_aug = np.concatenate([Bc, gc], axis=1)
         # # expm_matrix = np.concatenate([np.array([[Ac, Bc_aug]]),
         # #                               np.zeros([su+1,sx+su+1])])
@@ -298,15 +301,18 @@ class Vehicle_Dynamics(object):
         # Ad[0:nx,0:nx] = tmp[0:nx,  0:nx]
         # Bd[0:nx,0:nu] = tmp[0:nx, nx:nx+nu]
         # gd[0:nx]      = tmp[0:nx, nx+nu:] # sx+su: could not broadcast input array from shape (6) into shape (6,1)
+        # #  following to avoid numerical errors
+        # Ad[-1,-1] = 1.
+        # Bd[-1,-1] = self.dt
 
         # -- Forward Euler Method (Faster and similar with Exponential Matrix method. 19.08.01)
         Ad = np.zeros((nx, nx))
         for i in range(nx):
             Ad[i, i] = 1
-        Ad = Ad + Ac * self.dt
+        Ad = Ad + Ac * self.dt # Ad = I + dt*Ac
 
-        Bd = Bc * self.dt
-        gd = gc * self.dt
+        Bd = Bc * self.dt      # Bd = dt*Bc
+        gd = gc * self.dt      # gd = (f(x0,u0) - Acx0 - Bcu0) * dt
 
 
         # =========================
@@ -432,8 +438,11 @@ class Vehicle_Dynamics(object):
 
         # Dynamics model
         # Slip angle [deg]
-        alpha_f = np.rad2deg(-math.atan2( l_f*yaw_rate + v_y,v_x) + steer)
-        alpha_r = np.rad2deg(-math.atan2(-l_r*yaw_rate + v_y,v_x))
+        # alpha_f = np.rad2deg(-math.atan2( l_f*yaw_rate + v_y,v_x) + steer)
+        # alpha_r = np.rad2deg(-math.atan2(-l_r*yaw_rate + v_y,v_x))
+
+        alpha_f = -math.atan2( l_f*yaw_rate + v_y,v_x) + steer
+        alpha_r = -math.atan2(-l_r*yaw_rate + v_y,v_x)
 
         # Lateral force (front & rear)
         # Fy_f = D_lat_f * math.sin(C_lat_f * math.atan2(B_lat_f * alpha_f, 1)) # before was atan
@@ -535,7 +544,7 @@ def main():
     # Reference state
     xr = np.array([[ 0.],
                    [ 0.],
-                   [ np.deg2rad(90)],
+                   [ np.deg2rad(0)],
                    [ 25.0],
                    [ 0.],
                    [ 0.]])  #  [X; Y; Yaw; vel_x; vel_y; Yaw_rate]
@@ -585,8 +594,8 @@ def main():
         if i >= 0.5*sim_time:
             xr = np.array([[ 0.],
                             [ 0.],
-                            [ np.deg2rad(-100)],
-                            [ 25.0],
+                            [ np.deg2rad(10)],
+                            [ 15.0],
                             [ 0.],
                             [ 0.]])  #  [X; Y; Yaw; vel_x; vel_y; Yaw_rate]
 
