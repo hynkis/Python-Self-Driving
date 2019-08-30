@@ -50,7 +50,7 @@ class Vehicle_Dynamics(object):
         self.dt = dt                                              # sampling rate. for discritization. [sec]
 
 
-    def vehicle_dynamics(self, x, u):
+    def get_dynamics_model(self, x, u):
         """
         ===== Discretize Linearized Dynamics model =====
 
@@ -73,6 +73,11 @@ class Vehicle_Dynamics(object):
         https://www.hyundai.news/eu/press-kits/new-generation-hyundai-i30-technical-specifications/
         
         """
+        if x.ndim < 2:
+            x = np.expand_dims(x, axis=1) # shape of x should be (N,1), not (N,)
+        if u.ndim < 2:
+            u = np.expand_dims(u, axis=1)
+
         # ===== Model parameters ===== #
 
         # num of state, action
@@ -125,17 +130,6 @@ class Vehicle_Dynamics(object):
         B_lat_r = BCD_lat_r/(C_lat_r*D_lat_r)
         E_lat_r = a_lat_r[5]*Fz_r**2 + a_lat_r[6]*Fz_r + a_lat_r[7]
 
-        # MPCC parameters
-        # B_lat_f = 13
-        # C_lat_f = 2
-        # D_lat_f = Fz_f * 1.2 * 1000
-
-        # B_lat_r = 13
-        # C_lat_r = 2
-        # D_lat_r = Fz_r * 1.2 * 1000
-
-
-
         """
         ===== Discretize Linearized Dynamics model =====
         """
@@ -145,37 +139,40 @@ class Vehicle_Dynamics(object):
 
         # Avoiding zero denominator (for slip angle, expm in discretization procedure)
         # before 19.07.31, 0.5 m/s
-        if x[3] >=0 and x[3] < 0.5:
+        if x[3,0] >=0 and x[3,0] < 0.5:
             # x[3] = 0.0
-            x[4] = 0.       # v_y
-            x[5] = 0.       # yaw_rate
-            u[0] = 0.       # steer
-            if x[3] < 0.3:
-                x[3] = 0.3  # v_x
+            x[4,0] = 0.       # v_y
+            x[5,0] = 0.       # yaw_rate
+            u[0,0] = 0.       # steer
+            if x[3,0] < 0.3:
+                x[3,0] = 0.3  # v_x
             print("Avoiding zero denominator")
 
-        if x[3] > -0.5 and x[3] < 0:
+        if x[3,0] > -0.5 and x[3,0] < 0:
             # x[3] = 0.
-            x[4] = 0.
-            x[5] = 0.
-            u[0] = 0.
-            if x[3] > -0.3:
-                x[3] = -0.3
+            x[4,0] = 0.
+            x[5,0] = 0.
+            u[0,0] = 0.
+            if x[3,0] > -0.3:
+                x[3,0] = -0.3
             print("Avoiding zero denominator")
 
         # States
-        yaw =         x[2][0]  # [0] for scalar data
-        v_x =         x[3][0]
-        v_y =         x[4][0]
-        yaw_rate =    x[5][0]
+        yaw =         x[2,0]  # [0] for scalar data
+        v_x =         x[3,0]
+        v_y =         x[4,0]
+        yaw_rate =    x[5,0]
 
-        steer =       u[0][0]
-        accel_track = u[1][0]
+        steer =       u[0,0]
+        accel_track = u[1,0]
 
         # Dynamics model
         # Slip angle [deg]
-        alpha_f = np.rad2deg(-math.atan2( l_f*yaw_rate + v_y,v_x) + steer)
-        alpha_r = np.rad2deg(-math.atan2(-l_r*yaw_rate + v_y,v_x))
+        # alpha_f = np.rad2deg(-math.atan2( l_f*yaw_rate + v_y,v_x) + steer)
+        # alpha_r = np.rad2deg(-math.atan2(-l_r*yaw_rate + v_y,v_x))
+        
+        alpha_f = -math.atan2( l_f*yaw_rate + v_y,v_x) + steer
+        alpha_r = -math.atan2(-l_r*yaw_rate + v_y,v_x)
 
         # Lateral force (front & rear)
         # Fy_f = D_lat_f * math.sin(C_lat_f * math.atan2(B_lat_f * alpha_f, 1)) # before was atan
@@ -190,7 +187,7 @@ class Vehicle_Dynamics(object):
         F_aero = 0.5*roh*C_d*A_f*v_x**2 * np.sign(v_x)          # aero dynamics drag. [N] 0.5*rho*cd*A.
         Fx_f = m*accel_track - F_aero - R_roll
 
-        # Next state
+        # X dot
         f = np.array([[v_x*math.cos(yaw) - v_y*math.sin(yaw)],
                       [v_y*math.cos(yaw) + v_x*math.sin(yaw)],
                       [yaw_rate],
@@ -288,7 +285,7 @@ class Vehicle_Dynamics(object):
         gc = f - np.matmul(Ac, x) - np.matmul(Bc, u)
         
         # Discretize
-        # -- Exponential Matrix
+        # # -- Exponential Matrix
         # Bc_aug = np.concatenate([Bc, gc], axis=1)
         # # expm_matrix = np.concatenate([np.array([[Ac, Bc_aug]]),
         # #                               np.zeros([su+1,sx+su+1])])
@@ -304,15 +301,18 @@ class Vehicle_Dynamics(object):
         # Ad[0:nx,0:nx] = tmp[0:nx,  0:nx]
         # Bd[0:nx,0:nu] = tmp[0:nx, nx:nx+nu]
         # gd[0:nx]      = tmp[0:nx, nx+nu:] # sx+su: could not broadcast input array from shape (6) into shape (6,1)
+        # #  following to avoid numerical errors
+        # Ad[-1,-1] = 1.
+        # Bd[-1,-1] = self.dt
 
         # -- Forward Euler Method (Faster and similar with Exponential Matrix method. 19.08.01)
         Ad = np.zeros((nx, nx))
         for i in range(nx):
             Ad[i, i] = 1
-        Ad = Ad + Ac * self.dt
+        Ad = Ad + Ac * self.dt # Ad = I + dt*Ac
 
-        Bd = Bc * self.dt
-        gd = gc * self.dt
+        Bd = Bc * self.dt      # Bd = dt*Bc
+        gd = gc * self.dt      # gd = (f(x0,u0) - Acx0 - Bcu0) * dt
 
 
         # =========================
@@ -328,10 +328,147 @@ class Vehicle_Dynamics(object):
         # normalize angle
         # x_k1[2] = normalize_angle(x_k1[2])
 
-        return Ad, Bd, gd, alpha_f, alpha_r
-        # return Ad, Bd, gd, alpha_f, alpha_r, Fx_f
+        return Ad, Bd, gd
+        # return Ad, Bd, gd, alpha_f, alpha_r
 
-    
+    def update_dynamics_model(self, x, u):
+        """
+        ===== Discretize Linearized Dynamics model =====
+
+        Inputs:
+            x : states,  [X; Y; Yaw; vel_x; vel_y; Yaw_rate]
+            u : actions, [steer; traction_accel]
+
+        Outputs:
+            x_next  : next_states.
+            alpha_f : side slip on front axle
+            alpha_r : side slip on rear axle
+        """
+        if x.ndim < 2:
+            x = np.expand_dims(x, axis=1) # shape of x should be (N,1), not (N,)
+        if u.ndim < 2:
+            u = np.expand_dims(u, axis=1)
+        # ===== Model parameters ===== #
+
+        # num of state, action
+        nx = 6
+        nu = 2
+
+        m = self.m  # i30
+
+        width = self.width
+        length = self.length
+
+        l_f = self.l_f
+        l_r = self.l_r
+        wheelbase = self.wheelbase
+        turning_circle = self.turning_circle
+        max_steer = self.max_steer
+
+        Iz = self.Iz
+
+        # Iw = 1.8  # wheel inertia
+        # rw = 0.3  # wheel radius
+
+        roh = self.roh               # density of air       [kg/m3]
+        C_d = self.C_d               # drag coefficient
+        A_f = self.A_f               # vehicle frontal area [m2]
+        C_roll = self.C_roll         # rolling resistance coefficient
+
+        dt = self.dt                 # sampling time.       [sec]
+
+        
+        """
+        Pacejka lateral tire model params
+        
+        """
+        Fz_f = 9.81 * (m * l_r/wheelbase) * 0.001 # vertical force at front axle. [kN]
+
+        a_lat_f = [-22.1, 1011, 1078, 1.82, 0.208, 0.000, -0.354, 0.707] # for Fy
+        C_lat_f = 1.30
+        D_lat_f = a_lat_f[0]*Fz_f**2 + a_lat_f[1]*Fz_f
+        BCD_lat_f = a_lat_f[2]*math.sin(a_lat_f[3]*math.atan(a_lat_f[4]*Fz_f)) # before, atan
+        B_lat_f = BCD_lat_f/(C_lat_f*D_lat_f)
+        E_lat_f = a_lat_f[5]*Fz_f**2 + a_lat_f[6]*Fz_f + a_lat_f[7]
+
+        Fz_r = 9.81 * (m * l_f/wheelbase) * 0.001 # vertical force at rear axle. [kN]
+
+        a_lat_r = [-22.1, 1011, 1078, 1.82, 0.208, 0.000, -0.354, 0.707] # for Fy
+        C_lat_r = 1.30
+        D_lat_r = a_lat_r[0]*Fz_r**2 + a_lat_r[1]*Fz_r
+        BCD_lat_r = a_lat_r[2]*math.sin(a_lat_r[3]*math.atan(a_lat_r[4]*Fz_r)) # berore, atan
+        B_lat_r = BCD_lat_r/(C_lat_r*D_lat_r)
+        E_lat_r = a_lat_r[5]*Fz_r**2 + a_lat_r[6]*Fz_r + a_lat_r[7]
+
+        """
+        ===== Discretize Linearized Dynamics model =====
+        """
+
+        # normalize angle
+        # x[2] = normalize_angle(x[2])
+
+        # Avoiding zero denominator (for slip angle, expm in discretization procedure)
+        # before 19.07.31, 0.5 m/s
+        if x[3,0] >=0 and x[3,0] < 0.5:
+            # x[3] = 0.0
+            x[4,0] = 0.       # v_y
+            x[5,0] = 0.       # yaw_rate
+            u[0,0] = 0.       # steer
+            if x[3,0] < 0.3:
+                x[3,0] = 0.3  # v_x
+            print("Avoiding zero denominator")
+
+        if x[3,0] > -0.5 and x[3,0] < 0:
+            # x[3] = 0.
+            x[4,0] = 0.
+            x[5,0] = 0.
+            u[0,0] = 0.
+            if x[3,0] > -0.3:
+                x[3,0] = -0.3
+            print("Avoiding zero denominator")
+
+        # States
+        yaw =         x[2,0]  # [0] for scalar data
+        v_x =         x[3,0]
+        v_y =         x[4,0]
+        yaw_rate =    x[5,0]
+
+        steer =       u[0,0]
+        accel_track = u[1,0]
+
+        # Dynamics model
+        # Slip angle [deg]
+        # alpha_f = np.rad2deg(-math.atan2( l_f*yaw_rate + v_y,v_x) + steer)
+        # alpha_r = np.rad2deg(-math.atan2(-l_r*yaw_rate + v_y,v_x))
+
+        alpha_f = -math.atan2( l_f*yaw_rate + v_y,v_x) + steer
+        alpha_r = -math.atan2(-l_r*yaw_rate + v_y,v_x)
+
+        # Lateral force (front & rear)
+        # Fy_f = D_lat_f * math.sin(C_lat_f * math.atan2(B_lat_f * alpha_f, 1)) # before was atan
+        # Fy_r = D_lat_r * math.sin(C_lat_r * math.atan2(B_lat_r * alpha_r, 1)) # before was atan
+        Fy_f = D_lat_f * math.sin(C_lat_f * math.atan(B_lat_f * alpha_f))
+        Fy_r = D_lat_r * math.sin(C_lat_r * math.atan(B_lat_r * alpha_r))
+
+        # Longitudinal force
+
+        # for both forward and backward driving.
+        R_roll = C_roll * m * 9.81 * np.sign(v_x)               # rolling resistance. [N] f*(Fzf+Fzr) = f*(mg)
+        F_aero = 0.5*roh*C_d*A_f*v_x**2 * np.sign(v_x)          # aero dynamics drag. [N] 0.5*rho*cd*A.
+        Fx_f = m*accel_track - F_aero - R_roll
+
+        # Next state
+        x_dot = np.array([[v_x*math.cos(yaw) - v_y*math.sin(yaw)],
+                            [v_y*math.cos(yaw) + v_x*math.sin(yaw)],
+                            [yaw_rate],
+                            [1./m*(Fx_f*math.cos(steer) - Fy_f*math.sin(steer) + m*v_y*yaw_rate)],
+                            [1./m*(Fx_f*math.sin(steer) + Fy_r + Fy_f*math.cos(steer) - m*v_x*yaw_rate)],
+                            [1./Iz*(Fx_f*l_f*math.sin(steer) + Fy_f*l_f*math.cos(steer)- Fy_r*l_r)]])
+
+        x_next = x + x_dot * dt
+
+        return x_next, alpha_f, alpha_r
+
 class Vehicle_Kinematics(object):
     def __init__(self, l_f=1.25, l_r=1.40, dt = 0.02):
         self.l_f = l_f
@@ -370,7 +507,7 @@ class Vehicle_Kinematics(object):
         return A, B, C
 
 
-    def update_kinematic_model(self, x, u):
+    def update_kinematics_model(self, x, u):
         """
         Update Kinematic Model.
             States  : [x; y; v; yaw]
@@ -394,20 +531,20 @@ def main():
     # Simulation
 
     # Initial state
-    x = np.array([[ 0.],
+    x0 = np.array([[ 0.],
                   [ 0.],
                   [ np.deg2rad(0)],
                   [ 5.0],
                   [ 0.],
                   [ 0.]])  #  [X; Y; Yaw; vel_x; vel_y; Yaw_rate]
 
-    u = np.array([[0*math.pi/180],
+    u0 = np.array([[0*math.pi/180],
                    [0.0]]) #  [steer; traction_accel]
 
     # Reference state
     xr = np.array([[ 0.],
                    [ 0.],
-                   [ np.deg2rad(90)],
+                   [ np.deg2rad(0)],
                    [ 25.0],
                    [ 0.],
                    [ 0.]])  #  [X; Y; Yaw; vel_x; vel_y; Yaw_rate]
@@ -444,23 +581,11 @@ def main():
     UU = np.zeros([nu, sim_time])
     TT = np.linspace(0, sim_time*dt, sim_time)
 
-    X_pred_last = []
-    Y_pred_last = []
-
-
-    vehicle = Vehicle_Dynamics(m=m,
-                            l_f=l_f,
-                            l_r=l_r,
-                            width = width,
-                            length = length,
-                            turning_circle=turning_circle,
-                            C_d = C_d,
-                            A_f = A_f,
-                            C_roll = C_roll,
-                            dt = dt)
+    vehicle = Vehicle_Dynamics(m=m, l_f=l_f, l_r=l_r, width = width, length = length,
+                                turning_circle=turning_circle,
+                                C_d = C_d, A_f = A_f, C_roll = C_roll, dt = dt)
 
     for i in range(sim_time):
-
         print("===================== nsim :", i, "=====================")
 
         # timestamp
@@ -468,11 +593,11 @@ def main():
 
         if i >= 0.5*sim_time:
             xr = np.array([[ 0.],
-                   [ 0.],
-                   [ np.deg2rad(-100)],
-                   [ 25.0],
-                   [ 0.],
-                   [ 0.]])  #  [X; Y; Yaw; vel_x; vel_y; Yaw_rate]
+                            [ 0.],
+                            [ np.deg2rad(10)],
+                            [ 15.0],
+                            [ 0.],
+                            [ 0.]])  #  [X; Y; Yaw; vel_x; vel_y; Yaw_rate]
 
         # u[0] += np.deg2rad(0.1)
         # if u[0] >= np.deg2rad(5):
@@ -480,36 +605,28 @@ def main():
         
         # ===== PID Control ===== #
         p_steer = 5.0
-        error_yaw = normalize_angle(xr[2] - x[2])
+        error_yaw = normalize_angle(xr[2,0] - x0[2,0])
         
         # Steer control
-        u[0] = p_steer * error_yaw
-        if u[0] >= np.deg2rad(15):
-            u[0] = np.deg2rad(15)
-        if u[0] <= -np.deg2rad(15):
-            u[0] = -np.deg2rad(15)
+        u0[0,0] = p_steer * error_yaw
+        if u0[0,0] >= np.deg2rad(15):
+            u0[0,0] = np.deg2rad(15)
+        if u0[0,0] <= -np.deg2rad(15):
+            u0[0,0] = -np.deg2rad(15)
 
         # Speed control
         p_accel = 10.0
-        error_vx = xr[3] - x[3]
-        u[1] = p_accel * error_vx
-        if u[1] >= 1:
-            u[1] = 1
-        if u[1] <= -3:
-            u[1] = -3
+        error_vx = xr[3,0] - x0[3,0]
+        u0[1,0] = p_accel * error_vx
+        if u0[1,0] >= 1:
+            u0[1,0] = 1
+        if u0[1,0] <= -3:
+            u0[1,0] = -3
 
 
-        XX[:,i] = x.T   # list for plot.
+        XX[:,i] = x0.T   # list for plot.
         TT[i] = dt * i
-        UU[:,i] = u.T
-
-        Ad, Bd, gd, alpha_f, alpha_r = vehicle.vehicle_dynamics(x, u)
-        # Ad, Bd, gd, alpha_f, alpha_r, Fx_f = vehicle.vehicle_dynamics(x, u)
-
-        x_k = x
-        u_k = u
-        x_k1 = np.matmul(Ad, x_k) + np.matmul(Bd, u_k) + gd    # shape: (nx+1, 1)
-        # x_k1 = np.matmul(Ad, x_k) + np.matmul(Bd, u_k)
+        UU[:,i] = u0.T
 
         # normalize angle (Better not to normalize.)
         # x_k1[2] = normalize_angle(x_k1[2])
@@ -517,30 +634,20 @@ def main():
 
         # State Prediction
         N = 100
-        x_pred = []
-        y_pred = []
-        x_pred.append(x_k1[0])
-        y_pred.append(x_k1[1])
-        xx = x_k1
+        pred_x = np.zeros((nx, N+1))
+        pred_x[:,0] = x0.T
 
-        for i in range(N-1):
-            x_next = np.matmul(Ad, xx) + np.matmul(Bd, u) + gd
-            # x_next = np.matmul(Ad, xx) + np.matmul(Bd, u)
-            x_pred.append(x_next[0])
-            y_pred.append(x_next[1])
-            # x_next[2] = normalize_angle(x_next[2])
-            # print("heading in prediction :", np.rad2deg(x_next[2]))
-            xx = x_next
+        x = x0
 
-        X_pred_last.append(xx[0])
-        Y_pred_last.append(xx[1])
+        for i in range(0, N):
+            x_next, _, _ = vehicle.update_dynamics_model(x, u0)
+            pred_x[:,i+1] = x_next.T
+            x = x_next
         
-
-
         # print
-        print("x :", x_k[0], "y :", x_k[1], "yaw :", x_k[2], "Vx :", x_k[3], "Vy :", x_k[4], "yawRate :", x_k[5])
+        print("x :", x0[0,0], "y :", x0[1,0], "yaw :", x0[2,0], "Vx :", x0[3,0], "Vy :", x0[4,0], "yawRate :", x0[5,0])
         print("          -----------------------------------------------------------------------          ")
-        print("steer :", u_k[0], "accel :", u_k[1])
+        print("steer :", u0[0,0], "accel :", u0[1,0])
 
         # print("Error yaw :", np.rad2deg(error_yaw))
 
@@ -548,21 +655,14 @@ def main():
         plt.plot(XX[0,:], XX[1,:], "-b", label="Hybrid A* path")
         plt.grid(True)
         plt.axis("equal")
-        plot_car(x_k[0], x_k[1], x_k[2], steer=u_k[0])
-        # plot_car_force(x_k[0], x_k[1], x_k[2], steer=u_k[0], Fx=Fx_f)
-        plt.plot(x_pred, y_pred, "r")
-        plt.plot(X_pred_last, Y_pred_last, ".r")
+        plot_car(x0[0,0], x0[1,0], x0[2,0], steer=u0[0,0])
+        plt.plot(pred_x[0,:], pred_x[1,:], "r")
         plt.pause(0.0001)
 
+        x1, alpha_f, alpha_r = vehicle.update_dynamics_model(x0, u0)
         XX_alpha[0,i] = alpha_f
         XX_alpha[1,i] = alpha_r
-
-        x = x_k1
-
-        print("Ad")
-        print(Ad)
-        print("Bd")
-        print(Bd)
+        x0 = x1 # update t+1 state
 
         toc = time.time()
         print("process time :", toc - tic)
