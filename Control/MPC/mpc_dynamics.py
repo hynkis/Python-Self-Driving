@@ -3,12 +3,9 @@ Date : 2019.08.22
 Author : Hyunki Seong
 
 Python MPC
-    - based on Dynamics model
+    - based on Dynamics model (Front wheel driven)
     - using predictive linearized matrix
-
-TODO (19.08.30)
-    - Modify Vehicle model (from front wheel to rear wheel)
-    - Check code block of OSQP
+    - Incremetal MPC
 """
 
 import osqp
