@@ -201,7 +201,6 @@ def mpc(Ad_list, Bd_list, gd_list, x_vec, Xr, pred_x, pred_u, Q, QN, R, N, xmin,
     Bu = sparse.vstack([Bu_Bd_top, Bu_Bd])
     Aeq = sparse.hstack([Ax, Bu])
 
-
     leq = -x_vec # later ueq == leq
     for i in range(N):
         gd = np.squeeze(gd_list[i], axis=1) # from (N,1) to (N,)
@@ -239,7 +238,7 @@ def mpc(Ad_list, Bd_list, gd_list, x_vec, Xr, pred_x, pred_u, Q, QN, R, N, xmin,
 
     # ==========Create an OSQP object and Setup workspace ==========
     prob = osqp.OSQP()
-    prob.setup(P, q, A, lb, ub, verbose=True, polish=False, warm_start=False) # verbose: print output.
+    prob.setup(P, q, A, lb, ub, verbose=False, polish=False, warm_start=True) # verbose: print output.
 
     # Solve
     res = prob.solve()
@@ -254,8 +253,6 @@ def mpc(Ad_list, Bd_list, gd_list, x_vec, Xr, pred_x, pred_u, Q, QN, R, N, xmin,
     # Predictive States and Actions
     sol_state = res.x[:-N*nu]
     sol_action = res.x[-N*nu:]
-    print("sol_action")
-    print(sol_action)
 
     for ii in range((N+1)*nx):
         if ii % nx == 0:
@@ -281,6 +278,142 @@ def mpc(Ad_list, Bd_list, gd_list, x_vec, Xr, pred_x, pred_u, Q, QN, R, N, xmin,
 
     return pred_x, pred_u
 
+def mpc_increment(Ad_list, Bd_list, gd_list, x_tilda_vec, Xr, pred_x_tilda, pred_del_u, Q, QN, R, N, xmin_tilda, xmax_tilda, del_umin, del_umax):
+    """
+    Incremental MPC
+    x_tilda_vec : [nx+nu, nx+nu]
+    Xr          : [nx, N+1]
+    Q           : [nx, nx]
+    R           : [nu, nu]
+    """
+    # ========== Cast MPC problem to a QP: x = (x(0),x(1),...,x(N),u(0),...,u(N-1)) ==========
+    nx = Ad_list[0].shape[0]
+    nu = Bd_list[0].shape[1]
+
+    # Cast MPC problem to a QP:
+    #   x = (x(0),x(1),...,x(N), u(0),...,u(N-1))
+
+    # Objective function
+    # C_tilda = [I, 0]
+    # Q_tilda = C_tilda.T * Q * C_tilta : (nx+nu, nx) * (nx, nx) * (nx, nx+nu) => (nx+nu, nx+nu)
+    C_tilda = sparse.hstack([sparse.eye(nx), np.zeros([nx, nu])]) # (nx, nx+nu)
+    Q_tilda = C_tilda.transpose() * Q * C_tilda
+    Q_tilda_N = C_tilda.transpose() * QN * C_tilda
+
+    # - quadratic objective (P)
+    P = sparse.block_diag([sparse.kron(sparse.eye(N), Q_tilda),       # Q x (N+1) on diagonal
+                        Q_tilda_N,
+                        sparse.kron(sparse.eye(N), R),             # R X (N) on diagonal
+                        ]).tocsc()      
+
+    # - linear objective (q)
+    Q_C_tilda = Q * C_tilda
+    QN_C_tilda = QN * C_tilda
+
+    Q_C_tilda_trans = Q_C_tilda.transpose()
+    QN_C_tilda_trans = QN_C_tilda.transpose()
+
+    q = -Q_C_tilda_trans.dot(Xr[:,0])                                   # index 0
+    for ii in range(N-1):
+        q = np.hstack([q, -Q_C_tilda_trans.dot(Xr[:,ii+1])])             # index 1 ~ N-1
+    q = np.hstack([q, -QN_C_tilda_trans.dot(Xr[:,N]), np.zeros(N*nu)])   # index N
+
+    # Augmentation for Incremental Control
+    Ad_sys = Ad_list[0]
+    Bd_sys = Bd_list[0]
+    Aug_A_sys = np.hstack([Ad_sys, Bd_sys])
+    Aug_A_increment = sparse.hstack([sparse.csr_matrix((nu, nx)), sparse.eye(nu)])
+    Ad_tilda = sparse.vstack([Aug_A_sys, Aug_A_increment])
+    Bd_tilda = sparse.vstack([Bd_sys, sparse.eye(nu)])
+
+    Ax_Ad = sparse.csc_matrix(Ad_tilda)
+    Ax_diag = sparse.kron(sparse.eye(N+1),-sparse.eye(nx+nu))
+    Bu_Bd = sparse.csc_matrix(Bd_tilda)
+
+    for i in range(N-1):
+        Ad_sys = Ad_list[i+1]
+        Bd_sys = Bd_list[i+1]
+        Aug_A_sys = np.hstack([Ad_sys, Bd_sys])
+        Aug_A_increment = sparse.hstack([sparse.csr_matrix((nu, nx)), sparse.eye(nu)])
+        Ad_tilda = sparse.vstack([Aug_A_sys, Aug_A_increment])
+        Bd_tilda = sparse.vstack([Bd_sys, sparse.eye(nu)])
+
+        Ax_Ad = sparse.block_diag([Ax_Ad, Ad_tilda])
+        Bu_Bd = sparse.block_diag([Bu_Bd, Bd_tilda])
+
+    Ax_Ad_top = sparse.kron(np.ones(N+1), np.zeros((nx+nu, nx+nu)))
+    Ax_Ad_side = sparse.kron(np.ones((N,1)), np.zeros((nx+nu, nx+nu)))
+    Ax = Ax_diag + sparse.vstack([Ax_Ad_top, sparse.hstack([Ax_Ad, Ax_Ad_side])])
+    Bu_Bd_top = sparse.kron(np.ones(N), np.zeros((nx+nu, nu)))
+    Bu = sparse.vstack([Bu_Bd_top, Bu_Bd])
+    Aeq = sparse.hstack([Ax, Bu])
+
+    # - Equality constraint (linear dynamics) : lower bound and upper bound
+    leq = -x_tilda_vec # later ueq == leq
+    for i in range(N):
+        gd_tilda = np.vstack([gd_list[i], np.zeros((nu,1))]) # gd_tilda for augmented system
+        gd_tilda = np.squeeze(gd_tilda, axis=1) # from (N,1) to (N,)
+        leq = np.hstack([leq, -gd_tilda])
+    # leq = np.hstack([-x_tilda_vec, np.zeros(N*nx)])
+    ueq = leq
+
+    # Original Code
+    # ----- input and state constraints -----
+    Aineq = sparse.eye((N+1)*(nx+nu) + N*nu)
+    lineq = np.hstack([np.kron(np.ones(N+1), xmin_tilda), np.kron(np.ones(N), del_umin)])
+    uineq = np.hstack([np.kron(np.ones(N+1), xmax_tilda), np.kron(np.ones(N), del_umax)])
+
+    # ----- OSQP constraints -----
+    A = sparse.vstack([Aeq, Aineq]).tocsc()
+    lb = np.hstack([leq, lineq])
+    ub = np.hstack([ueq, uineq])
+
+    # ==========Create an OSQP object and Setup workspace ==========
+    prob = osqp.OSQP()
+    prob.setup(P, q, A, lb, ub, verbose=True, polish=False, warm_start=False) # verbose: print output.
+
+    # Solve
+    res = prob.solve()
+
+    # Check solver status
+    if res.info.status != 'solved':
+        print('OSQP did not solve the problem!')
+        # raise ValueError('OSQP did not solve the problem!')
+        plt.pause(0.5)
+        # continue
+
+    # Predictive States and Actions
+    sol_state = res.x[:-N*nu]
+    sol_action = res.x[-N*nu:]
+
+    for ii in range((N+1)*(nx+nu)):
+        if ii % (nx+nu) == 0:
+            pred_x_tilda[0,ii//(nx+nu)] = sol_state[ii] # X
+        elif ii % (nx+nu) == 1:
+            pred_x_tilda[1,ii//(nx+nu)] = sol_state[ii] # Y
+        elif ii % (nx+nu) == 2:
+            pred_x_tilda[2,ii//(nx+nu)] = sol_state[ii] # Yaw
+        elif ii % (nx+nu) == 3:
+            pred_x_tilda[3,ii//(nx+nu)] = sol_state[ii] # Vx
+        elif ii % (nx+nu) == 4:
+            pred_x_tilda[4,ii//(nx+nu)] = sol_state[ii] # Vy
+        elif ii % (nx+nu) == 5:
+            pred_x_tilda[5,ii//(nx+nu)] = sol_state[ii] # Yawrate
+        elif ii % (nx+nu) == 6:
+            pred_x_tilda[6,ii//(nx+nu)] = sol_state[ii] # Steer
+        else: # ii % (nx+nu) == 7:
+            pred_x_tilda[7,ii//(nx+nu)] = sol_state[ii] # accel_track
+
+    for jj in range((N)*nu):
+        if jj % nu == 0:
+            pred_del_u[0,jj//nu] = sol_action[jj]
+        else: # jj % nu == 1
+            pred_del_u[1,jj//nu] = sol_action[jj]
+    pred_del_u[:,-1] = pred_del_u[:,-2] # append last control
+
+    return pred_x_tilda, pred_del_u    
+
+
 def main():
     # ===== Vehicle parameters =====
     l_f = 1.25
@@ -299,21 +432,21 @@ def main():
     vehicle = vehicle_models.Vehicle_Dynamics(m=m, l_f=l_f, l_r=l_r, width = width, length = length,
                             turning_circle=turning_circle, C_d = C_d, A_f = A_f, C_roll = C_roll, dt = dt)
     # ========== MPC parameters ==========
-    N = 50 # Prediction horizon
-    Q = sparse.diags([10.0, 10.0, 10.0, 5.0, 10.0, 10.0])         # weight matrix for state
-    QN = sparse.diags([100.0, 100.0, 100.0, 100.0, 100.0, 100.0])   # weight matrix for terminal state
-    R = sparse.diags([1000, 500])                      # weight matrix for control input
+    N = 30                                                       # Prediction horizon
+    Q = sparse.diags([100.0, 100.0, 100.0, 50.0, 50.0, 50.0])         # weight matrix for state
+    QN = sparse.diags([1000.0, 1000.0, 1000.0, 500.0, 500.0, 500.0])   # weight matrix for terminal state
+    R = sparse.diags([50, 50])                      # weight matrix for control input
 
     # ========== Constraints ==========
-    umin = np.array([-np.deg2rad(15), -1.]) # u : [steer, accel]
-    umax = np.array([ np.deg2rad(15),  1.])
-    xmin = np.array([-np.inf,-np.inf, -2*np.pi, -100., -100., -2*np.pi]) #  [X; Y; Yaw; V_x; V_y; Yaw_rate]
-    xmax = np.array([ np.inf, np.inf,  2*np.pi,  100.,  100.,  2*np.pi])
-
+    del_umin = np.array([-np.deg2rad(2.0), -0.5]) # del_u / tic (not del_u / sec) => del_u/sec = del_u/tic * tic/sec = del_u/tic * 20(Hz)
+    del_umax = np.array([ np.deg2rad(2.0),  0.5]) # 15 * 14 deg = 210 deg (steering wheel). 
+    xmin_tilda = np.array([-np.inf, -np.inf, -2*np.pi, -100., -30., -0.5*np.pi, -np.deg2rad(15), -3.])     # (x_min, u_min)
+    xmax_tilda = np.array([ np.inf,  np.inf,  2*np.pi,  100.,  30.,  0.5*np.pi,  np.deg2rad(15),  1.])     # (x_max, u_max)
+    
     # ========== Initialization ==========
     # Path
     path_x = np.linspace(-10, 100, 100/0.5)
-    path_y = np.linspace(-10, 100, 100/0.5) * 0.0 - 0.0
+    path_y = np.linspace(-10, 100, 100/0.5) * 0.5 + 5
 
     # Initial state
     # States  : [X; Y; Yaw; V_x; V_y; Yaw_rate]
@@ -321,34 +454,44 @@ def main():
     x0 = np.array([[0.0],
                     [0.0],
                     [np.deg2rad(0)],
-                    [10.0],
+                    [15.0],
                     [0.0],
                     [np.deg2rad(0)]])   # [X; Y; Yaw; V_x; V_y; Yaw_rate]
     u0 = np.array([[0*math.pi/180],
                     [0.0]])            # [steer; accel]
-
-
-    x_vec = np.squeeze(x0, axis=1) # (N,) shape for QP solver, NOT (N,1).
+    
+    del_u0 = np.array([[0*math.pi/180],
+                       [0.0]])            # [del steer; del accel]
 
     nx = x0.shape[0]
     nu = u0.shape[0]
 
+    # for Incremental MPC
+    x0_tilda = np.vstack([x0, u0])
+
+    x_tilda = np.copy(x0_tilda)
+    x_tilda_vec = np.squeeze(x_tilda, axis=1)
+
     # ========== Initialial guess states and controls ==========
-    xk = np.copy(x0)
-    uk = np.copy(u0)
+    x_tilda_k = np.copy(x0_tilda)
+    del_u_k = np.copy(del_u0)
 
-    pred_u = np.zeros((nu, N+1))
+    pred_del_u = np.zeros((nu, N+1))
     for i in range(N):
-        pred_u[:,i] = uk.T
-    pred_u[:,-1] = pred_u[:,-2] # append last pred_u for N+1
+        pred_del_u[:,i] = del_u_k.T
+    pred_del_u[:,-1] = pred_del_u[:,-2]
 
-    pred_x = np.zeros((nx, N+1))
-    pred_x[:,0] = xk.T
+    pred_x_tilda = np.zeros((nx+nu, N+1))
+    pred_x_tilda[:,0] = x_tilda_k.T
     for i in range(0, N):
-        Ad, Bd, gd = vehicle.get_dynamics_model(xk, uk)
-        xk1 = np.matmul(Ad, xk) + np.matmul(Bd, uk) + gd
-        pred_x[:,i+1] = xk1.T
-        xk = xk1
+        x_k = x_tilda_k[:-nu] # decompose to xk, uk
+        u_k = x_tilda_k[-nu:]
+        Ad, Bd, gd = vehicle.get_dynamics_model(x_k, u_k)
+        x_k1 = np.matmul(Ad, x_k) + np.matmul(Bd, u_k) + gd # calc next state
+        u_k1 = u_k + np.expand_dims(pred_del_u[:,i], axis=1) # calc next action
+        x_tilda_k1 = np.vstack([x_k1, u_k1]) # compose x tilda
+        pred_x_tilda[:,i+1] = x_tilda_k1.T
+        x_tilda_k = x_tilda_k1
 
     # ========== Simulation Setup ==========
     sim_time = 1000
@@ -356,95 +499,100 @@ def main():
     plt_states = np.zeros((nx, sim_time))
     plt_actions = np.zeros((nu, sim_time))
 
-    x = np.copy(x0)
+    # x = np.copy(x0)
+
 
     for i in range(sim_time):
         tic = time.time()
         print("===================== sim_time :", i, "=====================")
-
         # Discrete time model of the vehicle lateral dynamics
-
         # Reference states
-        Xr, _ = reference_search(path_x, path_y, pred_x, dt, N)
+        # Xr, _ = reference_search(path_x, path_y, pred_x, dt, N)
+        Xr, _ = reference_search(path_x, path_y, pred_x_tilda[:-nu,:], dt, N)
 
         # Discrete time model of the vehicle lateral dynamics
         Ad_list, Bd_list, gd_list = [], [], []
         for ii in range(N):
-            Ad, Bd, gd = vehicle.get_dynamics_model(pred_x[:,ii], pred_u[:,ii])
+            # Ad, Bd, gd = vehicle.get_dynamics_model(pred_x[:,ii], pred_u[:,ii])
+            Ad, Bd, gd = vehicle.get_dynamics_model(pred_x_tilda[:-nu,ii], pred_x_tilda[-nu:,ii])
             Ad_list.append(Ad)
             Bd_list.append(Bd)
             gd_list.append(gd)
 
         # Solve MPC
-        print("x :", x)
-        print("pred_x[:,0] :", pred_x[:,0])
-        print("pred_u[:,0] :", pred_u[:,0])
-        pred_x, pred_u = mpc(Ad_list, Bd_list, gd_list, x_vec, Xr, pred_x, pred_u, Q, QN, R, N, xmin, xmax, umin, umax)
-        toc = time.time()
-        print("after solve. pred_x[:,0] :", pred_x[:,0])
-        print("after solve. pred_x[:,1] :", pred_x[:,1])
-        print("after solve. pred_u[:,0] :", pred_u[:,0])
+        pred_x_tilda, pred_del_u = mpc_increment(Ad_list, Bd_list, gd_list, x_tilda_vec, Xr, pred_x_tilda, pred_del_u, Q, QN, R, N, xmin_tilda, xmax_tilda, del_umin, del_umax)
+        # iter_damping = 0.5
+        # for _ in range(1):
+        #     pred_x_tilda_up, pred_del_u_up = mpc_increment(Ad_list, Bd_list, gd_list, x_tilda_vec, Xr, pred_x_tilda, pred_del_u, Q, QN, R, N, xmin_tilda, xmax_tilda, del_umin, del_umax)
+        #     pred_x_tilda = iter_damping * pred_x_tilda + (1 - iter_damping) * pred_x_tilda_up
+        #     pred_del_u = iter_damping * pred_del_u + (1 - iter_damping) * pred_del_u_up
 
-        u = np.expand_dims(pred_u[:,0], axis=1) # from (N,) to (N,1)
+        toc = time.time()
 
         # Plot
-        print("Current   x :", x[0], "y :", x[1], "yaw :", x[2], "vx :", x[3], "vy :", x[4], "yawrate :", x[5])
+        print("Current   x :", x_tilda[0], "y :", x_tilda[1], "yaw :", x_tilda[2], "vx :", x_tilda[3], "vy :", x_tilda[4], "yawrate :", x_tilda[5])
         print("------------------------------------------------------------")
         print("Reference x :", Xr[0,0], "y :", Xr[1,0], "yaw :", Xr[2,0], "vx :", Xr[3,0], "vy :", Xr[4,0], "yawrate :", Xr[5,0])
         print("------------------------------------------------------------")
-        print("steer :", u[0], "accel :", u[1])
+        print("steer :", x_tilda[6], "accel :", x_tilda[7])
 
         print("Process time :", toc - tic)
 
+        # Save current state
+        plt_states[:,i] = x_tilda[:-nu].T
+        plt_actions[:,i] = x_tilda[-nu:].T
+
         plt.cla()
-        plt.plot(plt_states[0,:i], plt_states[1,:i], "-b", label="Drived") # plot from 0 to i
+        plt.plot(path_x, path_y, label="Path")
+        plt.plot(Xr[0,:], Xr[1,:], "g", label="Local Reference")
+        plt.plot(plt_states[0,:i+1], plt_states[1,:i+1], "-b", label="Drived") # plot from 0 to i
         plt.grid(True)
         plt.axis("equal")
-        plot_car(x[0], x[1], vehicle_models.normalize_angle(x[2]), steer=u[0]) # plotting w.r.t. rear axle.
-        plt.plot(pred_x[0,:], pred_x[1,:], "r")
-        plt.plot(path_x, path_y, label="Path")
-        plt.plot(Xr[0,:], Xr[1,:], "g")
-        plt.pause(3)
+        # plot_car(x[0], x[1], vehicle_models.normalize_angle(x[2]), steer=u[0]) # plotting w.r.t. rear axle.
+        plot_car(x_tilda[0], x_tilda[1], vehicle_models.normalize_angle(x_tilda[2]), steer=x_tilda[6]) # plotting w.r.t. rear axle.
+        plt.plot(pred_x_tilda[0,:], pred_x_tilda[1,:], "r", label="Predictive States")
+        
+        plt.pause(0.001)
         
         # Update States
-        x_next = np.matmul(Ad_list[0], x) + np.matmul(Bd_list[0], u) + gd_list[0]
-        plt_states[:,i] = x.T
-        plt_actions[:,i] = u.T
+        u_past = x_tilda[-nu:]
+        u = u_past + np.expand_dims(pred_del_u[:,0], axis=1)
+        x_next = np.matmul(Ad_list[0], x_tilda[:-nu]) + np.matmul(Bd_list[0], u) + gd_list[0]
 
-        print("after solve, update state. x_next :", x_next)
-
-        x = np.copy(x_next)
-        x_vec = np.squeeze(x, axis=1) # (N,) shape for QP solver, NOT (N,1).
+        x = x_next
+        x_tilda = np.vstack([x, u])
+        x_tilda_vec = np.squeeze(x_tilda, axis=1)
 
         # Update Predictive States and Actions
-        temp_pred_x = pred_x
-        temp_pred_u = pred_u
-
+        temp_pred_x_tilda = np.copy(pred_x_tilda)
+        temp_pred_del_u = np.copy(pred_del_u)
         # index 0
-        pred_x[:,0] = x_next.T                   
-        pred_u[:,0] = temp_pred_u[:,1] # before u.T
+        pred_x_tilda[:,0] = x_tilda.T          # shift one step
+        pred_del_u[:,0] = temp_pred_del_u[:,1] # shift one step
         # index 1 ~ N-2
         for ii in range(0, N-2):
-            pred_x[:,ii+1] = temp_pred_x[:,ii+2]
-            pred_u[:,ii+1] = temp_pred_u[:,ii+2]
+            pred_x_tilda[:,ii+1] = temp_pred_x_tilda[:,ii+2]
+            pred_del_u[:,ii+1] = temp_pred_del_u[:,ii+2]
         # index N-1
-        pred_x[:,-2] = temp_pred_x[:,N]
-        pred_u[:,-2] = temp_pred_u[:,N-1]
+        pred_x_tilda[:,-2] = temp_pred_x_tilda[:,N]
+        pred_del_u[:,-2] = temp_pred_del_u[:,N-1]
 
         # index N
         # append last state using last A, B matrix and last pred state
         # append last control with last pred control
-        last_state = np.expand_dims(temp_pred_x[:,N], axis=1) # from (N,) to (N,1)
-        last_control = np.expand_dims(temp_pred_u[:,N-1], axis=1)
-        aug_next_state = np.matmul(Ad_list[-1], last_state) + np.matmul(Bd_list[-1], last_control) + gd_list[-1]
-        pred_x[:,-1] = np.transpose(aug_next_state)
-        pred_u[:,-1] = pred_u[:,N-1]
+        # ODE?
+        last_state = np.expand_dims(temp_pred_x_tilda[:-nu,N], axis=1) # from (N,) to (N,1)
+        last_control = np.expand_dims(temp_pred_x_tilda[-nu:,N-1], axis=1)
+        final_state, _, _ = vehicle.update_dynamics_model(last_state, last_control)
+        pred_x_tilda[:-nu,-1] = np.transpose(final_state)
+        pred_x_tilda[-nu:,-1] = pred_x_tilda[-nu:,-2]
+        pred_del_u[:,-1] = pred_del_u[:,-2]
 
-        if pred_x[2,0] - pred_x[2,1] > np.pi:
-            pred_x[2,1:] = pred_x[2,1:] + 2*np.pi
+        if temp_pred_x_tilda[2,0] - temp_pred_x_tilda[2,1] > np.pi:
+            temp_pred_x_tilda[2,1:] = temp_pred_x_tilda[2,1:] + 2*np.pi
             print("from '-pi ~ +pi' to '0 ~ +2pi'")
-        if pred_x[2,0] - pred_x[2,1] < -np.pi:
-            pred_x[2,1:] = pred_x[2,1:] - 2*np.pi
+        if temp_pred_x_tilda[2,0] - temp_pred_x_tilda[2,1] < -np.pi:
+            temp_pred_x_tilda[2,1:] = temp_pred_x_tilda[2,1:] - 2*np.pi
             print("from '-pi ~ +pi' to '0 ~ +2pi'")
 
         # if check_goal(x, xr, goal_dist=1, stop_speed=5):
