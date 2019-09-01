@@ -27,7 +27,6 @@ class Vehicle_Dynamics(object):
     def __init__(self, m=1300, l_f=1.25, l_r=1.40, width = 1.78, length = 4.25, turning_circle=10.4, C_d = 0.34, A_f = 2.0, C_roll = 0.015, dt = 0.02):
         """
         Vehicle Dynamics Parameters
-
         """
         self.m = m                                                # mass. [kg]
         self.l_f = l_f                                            # from front axle to c.g. [m]
@@ -41,14 +40,14 @@ class Vehicle_Dynamics(object):
 
         # Iw = 1.8  # wheel inertia
         # rw = 0.3  # wheel radius
-        
         self.C_d = C_d                                            # drag coefficient
         self.A_f = A_f                                            # vehicle frontal area [m2]
         self.C_roll = C_roll                                      # rolling resistance coefficient
         self.roh = 1.23                                           # density of air       [kg/m3]
 
         self.dt = dt                                              # sampling rate. for discritization. [sec]
-
+        self.nx = 6
+        self.nu = 2
 
     def get_dynamics_model(self, x, u):
         """
@@ -81,8 +80,8 @@ class Vehicle_Dynamics(object):
         # ===== Model parameters ===== #
 
         # num of state, action
-        nx = 6
-        nu = 2
+        nx = self.nx
+        nu = self.nu
 
         m = self.m  # i30
 
@@ -118,7 +117,8 @@ class Vehicle_Dynamics(object):
         C_lat_f = 1.30
         D_lat_f = a_lat_f[0]*Fz_f**2 + a_lat_f[1]*Fz_f
         BCD_lat_f = a_lat_f[2]*math.sin(a_lat_f[3]*math.atan(a_lat_f[4]*Fz_f)) # before, atan
-        B_lat_f = BCD_lat_f/(C_lat_f*D_lat_f)
+        # B_lat_f = BCD_lat_f/(C_lat_f*D_lat_f)
+        B_lat_f = BCD_lat_f/(C_lat_f*D_lat_f) * 180/np.pi  # for radian sideslip angle.
         E_lat_f = a_lat_f[5]*Fz_f**2 + a_lat_f[6]*Fz_f + a_lat_f[7]
 
         Fz_r = 9.81 * (m * l_f/wheelbase) * 0.001 # vertical force at rear axle. [kN]
@@ -127,7 +127,8 @@ class Vehicle_Dynamics(object):
         C_lat_r = 1.30
         D_lat_r = a_lat_r[0]*Fz_r**2 + a_lat_r[1]*Fz_r
         BCD_lat_r = a_lat_r[2]*math.sin(a_lat_r[3]*math.atan(a_lat_r[4]*Fz_r)) # berore, atan
-        B_lat_r = BCD_lat_r/(C_lat_r*D_lat_r)
+        # B_lat_r = BCD_lat_r/(C_lat_r*D_lat_r)
+        B_lat_r = BCD_lat_r/(C_lat_r*D_lat_r) * 180/np.pi  # for radian sideslip angle
         E_lat_r = a_lat_r[5]*Fz_r**2 + a_lat_r[6]*Fz_r + a_lat_r[7]
 
         """
@@ -168,6 +169,7 @@ class Vehicle_Dynamics(object):
 
         # Dynamics model
         # Slip angle [deg]
+        # TODO: use radian unit
         # alpha_f = np.rad2deg(-math.atan2( l_f*yaw_rate + v_y,v_x) + steer)
         # alpha_r = np.rad2deg(-math.atan2(-l_r*yaw_rate + v_y,v_x))
         
@@ -275,12 +277,19 @@ class Vehicle_Dynamics(object):
                      [0., 0., 0.,       df5_dvx, df5_dvy, df5_dyaw_rate],
                      [0., 0., 0.,       df6_dvx, df6_dvy, df6_dyaw_rate]])
 
+        # Bc=np.array([[0.,            0.,       ],
+        #              [0.,            0.,       ],
+        #              [0.,            0.,       ],
+        #              [df4_daccel,    df4_dsteer],
+        #              [df5_daccel,    df5_dsteer],
+        #              [df6_daccel,    df6_dsteer]])
+
         Bc=np.array([[0.,            0.,       ],
                      [0.,            0.,       ],
                      [0.,            0.,       ],
-                     [df4_daccel,    df4_dsteer],
-                     [df5_daccel,    df5_dsteer],
-                     [df6_daccel,    df6_dsteer]])
+                     [df4_dsteer,    df4_daccel],
+                     [df5_dsteer,    df5_daccel],
+                     [df6_dsteer,    df6_daccel]])
 
         gc = f - np.matmul(Ac, x) - np.matmul(Bc, u)
         
@@ -351,8 +360,8 @@ class Vehicle_Dynamics(object):
         # ===== Model parameters ===== #
 
         # num of state, action
-        nx = 6
-        nu = 2
+        nx = self.nx
+        nu = self.nu
 
         m = self.m  # i30
 
@@ -388,7 +397,8 @@ class Vehicle_Dynamics(object):
         C_lat_f = 1.30
         D_lat_f = a_lat_f[0]*Fz_f**2 + a_lat_f[1]*Fz_f
         BCD_lat_f = a_lat_f[2]*math.sin(a_lat_f[3]*math.atan(a_lat_f[4]*Fz_f)) # before, atan
-        B_lat_f = BCD_lat_f/(C_lat_f*D_lat_f)
+        # B_lat_f = BCD_lat_f/(C_lat_f*D_lat_f)
+        B_lat_f = BCD_lat_f/(C_lat_f*D_lat_f) * 180/np.pi  # for radian sideslip angle
         E_lat_f = a_lat_f[5]*Fz_f**2 + a_lat_f[6]*Fz_f + a_lat_f[7]
 
         Fz_r = 9.81 * (m * l_f/wheelbase) * 0.001 # vertical force at rear axle. [kN]
@@ -397,7 +407,8 @@ class Vehicle_Dynamics(object):
         C_lat_r = 1.30
         D_lat_r = a_lat_r[0]*Fz_r**2 + a_lat_r[1]*Fz_r
         BCD_lat_r = a_lat_r[2]*math.sin(a_lat_r[3]*math.atan(a_lat_r[4]*Fz_r)) # berore, atan
-        B_lat_r = BCD_lat_r/(C_lat_r*D_lat_r)
+        # B_lat_r = BCD_lat_r/(C_lat_r*D_lat_r)
+        B_lat_r = BCD_lat_r/(C_lat_r*D_lat_r) * 180/np.pi   # for radian sideslip angle
         E_lat_r = a_lat_r[5]*Fz_r**2 + a_lat_r[6]*Fz_r + a_lat_r[7]
 
         """
@@ -464,6 +475,351 @@ class Vehicle_Dynamics(object):
                             [1./m*(Fx_f*math.cos(steer) - Fy_f*math.sin(steer) + m*v_y*yaw_rate)],
                             [1./m*(Fx_f*math.sin(steer) + Fy_r + Fy_f*math.cos(steer) - m*v_x*yaw_rate)],
                             [1./Iz*(Fx_f*l_f*math.sin(steer) + Fy_f*l_f*math.cos(steer)- Fy_r*l_r)]])
+
+        x_next = x + x_dot * dt
+
+        return x_next, alpha_f, alpha_r
+
+    def get_rear_wheel_dynamics_model(self, x, u):
+
+        if x.ndim < 2:
+            x = np.expand_dims(x, axis=1) # shape of x should be (N,1), not (N,)
+        if u.ndim < 2:
+            u = np.expand_dims(u, axis=1)
+
+        # ===== Model parameters ===== #
+        # num of state, action
+        nx = self.nx
+        nu = self.nu
+
+        m = self.m  # i30
+
+        width = self.width
+        length = self.length
+
+        l_f = self.l_f
+        l_r = self.l_r
+        wheelbase = self.wheelbase
+        turning_circle = self.turning_circle
+        max_steer = self.max_steer
+
+        Iz = self.Iz
+
+        # Iw = 1.8  # wheel inertia
+        # rw = 0.3  # wheel radius
+
+        roh = self.roh               # density of air       [kg/m3]
+        C_d = self.C_d               # drag coefficient
+        A_f = self.A_f               # vehicle frontal area [m2]
+        C_roll = self.C_roll         # rolling resistance coefficient
+
+        dt = self.dt                 # sampling time.       [sec]
+
+        """
+        Pacejka lateral tire model params
+        
+        """
+        Fz_f = 9.81 * (m * l_r/wheelbase) * 0.001 # vertical force at front axle. [kN]
+
+        a_lat_f = [-22.1, 1011, 1078, 1.82, 0.208, 0.000, -0.354, 0.707] # for Fy
+        C_lat_f = 1.30
+        D_lat_f = a_lat_f[0]*Fz_f**2 + a_lat_f[1]*Fz_f
+        BCD_lat_f = a_lat_f[2]*math.sin(a_lat_f[3]*math.atan(a_lat_f[4]*Fz_f)) # before, atan
+        B_lat_f = BCD_lat_f/(C_lat_f*D_lat_f)
+        E_lat_f = a_lat_f[5]*Fz_f**2 + a_lat_f[6]*Fz_f + a_lat_f[7]
+
+        Fz_r = 9.81 * (m * l_f/wheelbase) * 0.001 # vertical force at rear axle. [kN]
+
+        a_lat_r = [-22.1, 1011, 1078, 1.82, 0.208, 0.000, -0.354, 0.707] # for Fy
+        C_lat_r = 1.30
+        D_lat_r = a_lat_r[0]*Fz_r**2 + a_lat_r[1]*Fz_r
+        BCD_lat_r = a_lat_r[2]*math.sin(a_lat_r[3]*math.atan(a_lat_r[4]*Fz_r)) # berore, atan
+        B_lat_r = BCD_lat_r/(C_lat_r*D_lat_r)
+        E_lat_r = a_lat_r[5]*Fz_r**2 + a_lat_r[6]*Fz_r + a_lat_r[7]
+
+        # MPCC
+        Cm1 = 17303.
+        Cm2 = 175.
+
+        """
+        ===== Discretize Linearized Dynamics model =====
+        """
+
+        # normalize angle
+        # x[2] = normalize_angle(x[2])
+
+        # Avoiding zero denominator (for slip angle, expm in discretization procedure)
+        # before 19.07.31, 0.5 m/s
+        if x[3,0] >=0 and x[3,0] < 0.5:
+            # x[3] = 0.0
+            x[4,0] = 0.       # v_y
+            x[5,0] = 0.       # yaw_rate
+            u[0,0] = 0.       # steer
+            if x[3,0] < 0.3:
+                x[3,0] = 0.3  # v_x
+            print("Avoiding zero denominator")
+
+        if x[3,0] > -0.5 and x[3,0] < 0:
+            # x[3] = 0.
+            x[4,0] = 0.
+            x[5,0] = 0.
+            u[0,0] = 0.
+            if x[3,0] > -0.3:
+                x[3,0] = -0.3
+            print("Avoiding zero denominator")
+
+        # States
+        yaw =         x[2,0]  # [0] for scalar data
+        v_x =         x[3,0]
+        v_y =         x[4,0]
+        yaw_rate =    x[5,0]
+
+        steer         =       u[0,0]
+        accel_track   =       u[1,0]
+
+        # Dynamics model
+        # Slip angle [deg]
+        # alpha_f = np.rad2deg(-math.atan2( l_f*yaw_rate + v_y,v_x) + steer)
+        # alpha_r = np.rad2deg(-math.atan2(-l_r*yaw_rate + v_y,v_x))
+
+        alpha_f = np.rad2deg(-math.atan2( l_f*yaw_rate + v_y,v_x) + steer)
+        alpha_r = np.rad2deg(-math.atan2(-l_r*yaw_rate + v_y,v_x))
+
+        # Lateral force (front & rear)
+        # Fy_f = D_lat_f * math.sin(C_lat_f * math.atan2(B_lat_f * alpha_f, 1)) # before was atan
+        # Fy_r = D_lat_r * math.sin(C_lat_r * math.atan2(B_lat_r * alpha_r, 1)) # before was atan
+        Fy_f = D_lat_f * math.sin(C_lat_f * math.atan(B_lat_f * alpha_f))
+        Fy_r = D_lat_r * math.sin(C_lat_r * math.atan(B_lat_r * alpha_r))
+
+        R_roll = C_roll * m * 9.81 * np.sign(v_x)               # rolling resistance. [N] f*(Fzf+Fzr) = f*(mg)
+        F_aero = 0.5*roh*C_d*A_f*v_x**2 * np.sign(v_x)          # aero dynamics drag. [N] 0.5*rho*cd*A.
+
+        # Fx_f = (Cm1 * D-Cm2 * D * v_x) - R_roll - F_aero
+        Fx_f = m * accel_track - R_roll - F_aero
+
+        f = np.array([[v_x*math.cos(yaw) - v_y*math.sin(yaw)],
+                    [v_y*math.cos(yaw) + v_x*math.sin(yaw)],
+                    [yaw_rate],
+                    [1./m*(Fx_f - Fy_f*math.sin(steer) + m*v_y*yaw_rate)],
+                    [1./m*(Fy_r + Fy_f*math.cos(steer) - m*v_x*yaw_rate)],
+                    [1./Iz*(Fy_f*l_f*math.cos(steer)- Fy_r*l_r)]])
+        # Derivatives of the force laws
+        #  Fx_f
+        dFrx_dvx = - roh*C_d*A_f*v_x
+        dFrx_daccel_track  = m
+        #  Fy_r
+        dFry_dvx = ((B_lat_r*C_lat_r*D_lat_r*math.cos(C_lat_r*math.atan(B_lat_r*alpha_r)))/(1+B_lat_r**2*alpha_r**2)) \
+                *(-(l_r*yaw_rate - v_y)/((-l_r*yaw_rate + v_y)**2+v_x**2))
+
+        dFry_dvy = ((B_lat_r*C_lat_r*D_lat_r*math.cos(C_lat_r*math.atan(B_lat_r*alpha_r)))/(1+B_lat_r**2*alpha_r**2)) \
+                *((-v_x)/((-l_r*yaw_rate + v_y)**2+v_x**2))
+
+        dFry_dyaw_rate = ((B_lat_r*C_lat_r*D_lat_r*math.cos(C_lat_r*math.atan(B_lat_r*alpha_r)))/(1+B_lat_r**2*alpha_r**2)) \
+                *((l_r*v_x)/((-l_r*yaw_rate + v_y)**2+v_x**2))
+        #  Fy_f 
+
+        dFfy_dvx =     (B_lat_f*C_lat_f*D_lat_f*math.cos(C_lat_f*math.atan(B_lat_f*alpha_f)))/(1+B_lat_f**2*alpha_f**2) \
+                    *((l_f*yaw_rate + v_y)/((l_f*yaw_rate + v_y)**2+v_x**2))
+
+
+        dFfy_dvy =     (B_lat_f*C_lat_f*D_lat_f*math.cos(C_lat_f*math.atan(B_lat_f*alpha_f)))/(1+B_lat_f**2*alpha_f**2) \
+                    *(-v_x/((l_f*yaw_rate + v_y)**2+v_x**2))
+
+        dFfy_dyaw_rate =    (B_lat_f*C_lat_f*D_lat_f*math.cos(C_lat_f*math.atan(B_lat_f*alpha_f)))/(1+B_lat_f**2*alpha_f**2) \
+                    *((-l_f*v_x)/((l_f*yaw_rate + v_y)**2+v_x**2))
+
+        dFfy_dsteer =  (B_lat_f*C_lat_f*D_lat_f*math.cos(C_lat_f*math.atan(B_lat_f*alpha_f)))/(1+B_lat_f**2 * alpha_f**2) 
+
+        #  f1 = v_x*math.cos(yaw) - v_y*math.sin(yaw)
+        df1_dyaw = -v_x*math.sin(yaw) - v_y*math.cos(yaw)
+        df1_dvx  = math.cos(yaw)
+        df1_dvy  = -math.sin(yaw)
+
+        #  f2 = v_y*math.cos(yaw) + v_x*math.sin(yaw)
+        df2_dyaw = -v_y*math.sin(yaw) + v_x*math.cos(yaw)
+        df2_dvx  = math.sin(yaw)
+        df2_dvy  = math.cos(yaw)
+
+        #  f3 = yaw_rate
+        df3_dyaw_rate = 1.
+
+        #  f4 = 1/m*(Fx_f - Fy_f*math.sin(steer) + m*v_y*yaw_rate)
+        df4_dvx     = 1/m*(dFrx_dvx - dFfy_dvx * math.sin(steer))
+        df4_dvy     = 1/m*(           - dFfy_dvy*math.sin(steer)     + m*yaw_rate)
+        df4_dyaw_rate  = 1/m*(           - dFfy_dyaw_rate*math.sin(steer) + m*v_y)
+        df4_daccel_track      = 1/m*     dFrx_daccel_track
+        df4_dsteer  = 1/m*(           - dFfy_dsteer*math.sin(steer)  - Fy_f*math.cos(steer))
+
+
+        #  f5 = 1/m*(Fy_r + Fy_f*math.cos(steer) - m*v_x*yaw_rate)
+        df5_dvx     = 1/m*(dFry_dvx     + dFfy_dvx*math.cos(steer)     - m*yaw_rate)
+        df5_dvy     = 1/m*(dFry_dvy     + dFfy_dvy*math.cos(steer))   
+        df5_dyaw_rate  = 1/m*(dFry_dyaw_rate + dFfy_dyaw_rate*math.cos(steer) - m*v_x)
+        df5_dsteer  = 1/m*(               dFfy_dsteer*math.cos(steer)  - Fy_f*math.sin(steer))
+
+        #  f6 = 1/Iz*(Fy_f*l_f*math.cos(steer)- Fy_r*l_r)
+        df6_dvx     = 1/Iz*(dFfy_dvx*l_f*math.cos(steer)    - dFry_dvx*l_r)
+        df6_dvy     = 1/Iz*(dFfy_dvy*l_f*math.cos(steer)    - dFry_dvy*l_r)
+        df6_dyaw_rate  = 1/Iz*(dFfy_dyaw_rate*l_f*math.cos(steer) - dFry_dyaw_rate*l_r)
+        df6_dsteer  = 1/Iz*(dFfy_dsteer*l_f*math.cos(steer)  - Fy_f*l_f*math.sin(steer))
+
+        #  Jacobians
+        Ac=np.array([[0., 0., df1_dyaw, df1_dvx, df1_dvy, 0.        ],
+                    [0., 0., df2_dyaw, df2_dvx, df2_dvy, 0.        ],
+                    [0., 0., 0.,       0.,      0.,      df3_dyaw_rate],
+                    [0., 0., 0.,       df4_dvx, df4_dvy, df4_dyaw_rate],
+                    [0., 0., 0.,       df5_dvx, df5_dvy, df5_dyaw_rate],
+                    [0., 0., 0.,       df6_dvx, df6_dvy, df6_dyaw_rate]])
+
+        # Bc=np.array([[0.,     0.,       ],
+        #             [0.,     0.,       ],
+        #             [0.,     0.,       ],
+        #             [df4_daccel_track, df4_dsteer],
+        #             [0.,     df5_dsteer],
+        #             [0.,     df6_dsteer]])
+        Bc=np.array([[0.,         0.,       ],
+                     [0.,         0.,       ],
+                     [0.,         0.,       ],
+                     [df4_dsteer, df4_daccel_track    ],
+                     [df5_dsteer, 0.        ],
+                     [df6_dsteer, 0.        ]])
+
+        gc = f - np.matmul(Ac, x) - np.matmul(Bc, u)
+
+        # -- Forward Euler Method (Faster and similar with Exponential Matrix method. 19.08.01)
+        Ad = np.zeros((nx, nx))
+        for i in range(nx):
+            Ad[i, i] = 1
+        Ad = Ad + Ac * self.dt # Ad = I + dt*Ac
+
+        Bd = Bc * self.dt      # Bd = dt*Bc
+        gd = gc * self.dt      # gd = (f(x0,u0) - Acx0 - Bcu0) * dt
+
+        return Ad, Bd, gd
+
+    def update_rear_wheel_dynamics_model(self, x, u):
+
+        if x.ndim < 2:
+            x = np.expand_dims(x, axis=1) # shape of x should be (N,1), not (N,)
+        if u.ndim < 2:
+            u = np.expand_dims(u, axis=1)
+        # ===== Model parameters ===== #
+
+        # num of state, action
+        nx = self.nx
+        nu = self.nu
+
+        m = self.m  # i30
+
+        width = self.width
+        length = self.length
+
+        l_f = self.l_f
+        l_r = self.l_r
+        wheelbase = self.wheelbase
+        turning_circle = self.turning_circle
+        max_steer = self.max_steer
+
+        Iz = self.Iz
+
+        # Iw = 1.8  # wheel inertia
+        # rw = 0.3  # wheel radius
+
+        roh = self.roh               # density of air       [kg/m3]
+        C_d = self.C_d               # drag coefficient
+        A_f = self.A_f               # vehicle frontal area [m2]
+        C_roll = self.C_roll         # rolling resistance coefficient
+
+        dt = self.dt                 # sampling time.       [sec]
+
+        """
+        Pacejka lateral tire model params
+        
+        """
+        Fz_f = 9.81 * (m * l_r/wheelbase) * 0.001 # vertical force at front axle. [kN]
+
+        a_lat_f = [-22.1, 1011, 1078, 1.82, 0.208, 0.000, -0.354, 0.707] # for Fy
+        C_lat_f = 1.30
+        D_lat_f = a_lat_f[0]*Fz_f**2 + a_lat_f[1]*Fz_f
+        BCD_lat_f = a_lat_f[2]*math.sin(a_lat_f[3]*math.atan(a_lat_f[4]*Fz_f)) # before, atan
+        B_lat_f = BCD_lat_f/(C_lat_f*D_lat_f)
+        E_lat_f = a_lat_f[5]*Fz_f**2 + a_lat_f[6]*Fz_f + a_lat_f[7]
+
+        Fz_r = 9.81 * (m * l_f/wheelbase) * 0.001 # vertical force at rear axle. [kN]
+
+        a_lat_r = [-22.1, 1011, 1078, 1.82, 0.208, 0.000, -0.354, 0.707] # for Fy
+        C_lat_r = 1.30
+        D_lat_r = a_lat_r[0]*Fz_r**2 + a_lat_r[1]*Fz_r
+        BCD_lat_r = a_lat_r[2]*math.sin(a_lat_r[3]*math.atan(a_lat_r[4]*Fz_r)) # berore, atan
+        B_lat_r = BCD_lat_r/(C_lat_r*D_lat_r)
+        E_lat_r = a_lat_r[5]*Fz_r**2 + a_lat_r[6]*Fz_r + a_lat_r[7]
+
+        # MPCC
+        Cm1 = 17303.
+        Cm2 = 175.
+
+        """
+        ===== Discretize Linearized Dynamics model =====
+        """
+
+        # normalize angle
+        # x[2] = normalize_angle(x[2])
+
+        # Avoiding zero denominator (for slip angle, expm in discretization procedure)
+        # before 19.07.31, 0.5 m/s
+        if x[3,0] >=0 and x[3,0] < 0.5:
+            # x[3] = 0.0
+            x[4,0] = 0.       # v_y
+            x[5,0] = 0.       # yaw_rate
+            u[0,0] = 0.       # steer
+            if x[3,0] < 0.3:
+                x[3,0] = 0.3  # v_x
+            print("Avoiding zero denominator")
+
+        if x[3,0] > -0.5 and x[3,0] < 0:
+            # x[3] = 0.
+            x[4,0] = 0.
+            x[5,0] = 0.
+            u[0,0] = 0.
+            if x[3,0] > -0.3:
+                x[3,0] = -0.3
+            print("Avoiding zero denominator")
+
+        # States
+        yaw =         x[2,0]  # [0] for scalar data
+        v_x =         x[3,0]
+        v_y =         x[4,0]
+        yaw_rate =    x[5,0]
+
+        steer         =       u[0,0]
+        accel_track   =       u[1,0]
+
+        # Dynamics model
+        # Slip angle [deg]
+        # alpha_f = np.rad2deg(-math.atan2( l_f*yaw_rate + v_y,v_x) + steer)
+        # alpha_r = np.rad2deg(-math.atan2(-l_r*yaw_rate + v_y,v_x))
+
+        alpha_f = np.rad2deg(-math.atan2( l_f*yaw_rate + v_y,v_x) + steer)
+        alpha_r = np.rad2deg(-math.atan2(-l_r*yaw_rate + v_y,v_x))
+
+        # Lateral force (front & rear)
+        # Fy_f = D_lat_f * math.sin(C_lat_f * math.atan2(B_lat_f * alpha_f, 1)) # before was atan
+        # Fy_r = D_lat_r * math.sin(C_lat_r * math.atan2(B_lat_r * alpha_r, 1)) # before was atan
+        Fy_f = D_lat_f * math.sin(C_lat_f * math.atan(B_lat_f * alpha_f))
+        Fy_r = D_lat_r * math.sin(C_lat_r * math.atan(B_lat_r * alpha_r))
+
+        R_roll = C_roll * m * 9.81 * np.sign(v_x)               # rolling resistance. [N] f*(Fzf+Fzr) = f*(mg)
+        F_aero = 0.5*roh*C_d*A_f*v_x**2 * np.sign(v_x)          # aero dynamics drag. [N] 0.5*rho*cd*A.
+
+        # Fx_f = (Cm1 * D-Cm2 * D * v_x) - R_roll - F_aero
+        Fx_f = m * accel_track - R_roll - F_aero
+
+        x_dot = np.array([[v_x*math.cos(yaw) - v_y*math.sin(yaw)],
+                            [v_y*math.cos(yaw) + v_x*math.sin(yaw)],
+                            [yaw_rate],
+                            [1./m*(Fx_f - Fy_f*math.sin(steer) + m*v_y*yaw_rate)],
+                            [1./m*(Fy_r + Fy_f*math.cos(steer) - m*v_x*yaw_rate)],
+                            [1./Iz*(Fy_f*l_f*math.cos(steer)- Fy_r*l_r)]])
 
         x_next = x + x_dot * dt
 
@@ -591,10 +947,17 @@ def main():
         # timestamp
         tic = time.time()
 
-        if i >= 0.5*sim_time:
+        if i >= 0.1*sim_time:
             xr = np.array([[ 0.],
                             [ 0.],
                             [ np.deg2rad(10)],
+                            [ 15.0],
+                            [ 0.],
+                            [ 0.]])  #  [X; Y; Yaw; vel_x; vel_y; Yaw_rate]
+        if i >= 0.5*sim_time:
+            xr = np.array([[ 0.],
+                            [ 0.],
+                            [ np.deg2rad(100)],
                             [ 15.0],
                             [ 0.],
                             [ 0.]])  #  [X; Y; Yaw; vel_x; vel_y; Yaw_rate]
@@ -615,7 +978,7 @@ def main():
             u0[0,0] = -np.deg2rad(15)
 
         # Speed control
-        p_accel = 10.0
+        p_accel = 2.0
         error_vx = xr[3,0] - x0[3,0]
         u0[1,0] = p_accel * error_vx
         if u0[1,0] >= 1:
@@ -633,32 +996,34 @@ def main():
         # print("Normalized in loop. x_k1[2] :", x_k1[2])
 
         # State Prediction
-        N = 100
+        N = 50
         pred_x = np.zeros((nx, N+1))
         pred_x[:,0] = x0.T
 
         x = x0
 
-        for i in range(0, N):
+        for ii in range(0, N):
+            # x_next, _, _ = vehicle.update_rear_wheel_dynamics_model(x, u0)
             x_next, _, _ = vehicle.update_dynamics_model(x, u0)
-            pred_x[:,i+1] = x_next.T
+            pred_x[:,ii+1] = x_next.T
             x = x_next
         
         # print
         print("x :", x0[0,0], "y :", x0[1,0], "yaw :", x0[2,0], "Vx :", x0[3,0], "Vy :", x0[4,0], "yawRate :", x0[5,0])
-        print("          -----------------------------------------------------------------------          ")
+        print("    ------------------------------------------------------------------------------    ")
         print("steer :", u0[0,0], "accel :", u0[1,0])
 
         # print("Error yaw :", np.rad2deg(error_yaw))
 
         plt.cla()
-        plt.plot(XX[0,:], XX[1,:], "-b", label="Hybrid A* path")
+        plt.plot(XX[0,:i+1], XX[1,:i+1], "-b", label="Driven Path")
         plt.grid(True)
         plt.axis("equal")
         plot_car(x0[0,0], x0[1,0], x0[2,0], steer=u0[0,0])
         plt.plot(pred_x[0,:], pred_x[1,:], "r")
         plt.pause(0.0001)
 
+        # x1, alpha_f, alpha_r = vehicle.update_rear_wheel_dynamics_model(x0, u0)
         x1, alpha_f, alpha_r = vehicle.update_dynamics_model(x0, u0)
         XX_alpha[0,i] = alpha_f
         XX_alpha[1,i] = alpha_r
