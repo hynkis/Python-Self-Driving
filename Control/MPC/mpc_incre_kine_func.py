@@ -88,6 +88,8 @@ def mpc_increment(Ad_list, Bd_list, gd_list, x_tilda_vec, Xr, pred_x_tilda, pred
     Q           : [nx, nx]
     R           : [nu, nu]
     """
+
+    tic_mat = time.time()
     # ========== Cast MPC problem to a QP: x = (x(0),x(1),...,x(N),u(0),...,u(N-1)) ==========
     nx = Ad_list[0].shape[0]
     nu = Bd_list[0].shape[1]
@@ -170,7 +172,10 @@ def mpc_increment(Ad_list, Bd_list, gd_list, x_tilda_vec, Xr, pred_x_tilda, pred
     lb = np.hstack([leq, lineq])
     ub = np.hstack([ueq, uineq])
 
+    print("matrix time :", time.time() - tic_mat)
+
     # ==========Create an OSQP object and Setup workspace ==========
+    tic_solve = time.time()
     prob = osqp.OSQP()
     prob.setup(P, q, A, lb, ub, verbose=False, polish=False, warm_start=False) # verbose: print output.
 
@@ -181,6 +186,10 @@ def mpc_increment(Ad_list, Bd_list, gd_list, x_tilda_vec, Xr, pred_x_tilda, pred
     if res.info.status != 'solved':
         print('OSQP did not solve the problem!')
         raise ValueError('OSQP did not solve the problem!')
+
+    print("solver time :", time.time() - tic_solve)
+
+    tic_pred = time.time()
 
     # Predictive States and Actions
     sol_state = res.x[:-N*nu]
@@ -206,6 +215,8 @@ def mpc_increment(Ad_list, Bd_list, gd_list, x_tilda_vec, Xr, pred_x_tilda, pred
         else: # jj % nu == 1
             pred_del_u[1,jj//nu] = sol_action[jj]
     pred_del_u[:,-1] = pred_del_u[:,-2] # append last control
+
+    print("Parsing pred state action time :", time.time() - tic_pred)
 
     return pred_x_tilda, pred_del_u
 
@@ -319,15 +330,20 @@ def simulate(init_state, path_x, path_y, path_yaw):
         # Discrete time model of the vehicle lateral dynamics
 
         # Reference states
+        tic_ref = time.time()
         Xr, _ = reference_search(path_x, path_y, path_yaw, set_speed, pred_x_tilda[:-nu,:], dt, N)
+        print("reference time :", time.time() - tic_ref)
+
 
         # Discrete time model of the vehicle lateral dynamics
+        tic_model = time.time()
         Ad_list, Bd_list, gd_list = [], [], []
         for ii in range(N):
             Ad, Bd, gd = vehicle.get_kinematics_model(pred_x_tilda[:-nu,ii], pred_x_tilda[-nu:,ii])
             Ad_list.append(Ad)
             Bd_list.append(Bd)
             gd_list.append(gd)
+        print("model time :", time.time() - tic_model)
 
         # Solve MPC
         tic_mpc = time.time()
@@ -364,14 +380,16 @@ def simulate(init_state, path_x, path_y, path_yaw):
         # print("plt time :", toc_plt - tic_plt)
 
         # Update States
+        tic_augstate = time.time()
+
         u_past = x_tilda[-nu:]
         u = u_past + np.expand_dims(pred_del_u[:,0], axis=1)
         x_next = np.matmul(Ad_list[0], x_tilda[:-nu]) + np.matmul(Bd_list[0], u) + gd_list[0]
 
         # Collect trajectories
-        traj_x.append(x_tilda[0])
-        traj_y.append(x_tilda[1])
-        traj_yaw.append(x_tilda[3])
+        traj_x.append(x_tilda[0,0])
+        traj_y.append(x_tilda[1,0])
+        traj_yaw.append(x_tilda[3,0])
         traj_steer.append(pred_del_u[:,0][0])
 
         # Stop when lane changing is over
@@ -408,6 +426,8 @@ def simulate(init_state, path_x, path_y, path_yaw):
         pred_x_tilda[:-nu,-1] = np.transpose(vehicle.update_kinematics_model(last_state, last_control))
         pred_x_tilda[-nu:,-1] = pred_x_tilda[-nu:,-2]
         pred_del_u[:,-1] = pred_del_u[:,-2]
+
+        print("Augstate time :", time.time() - tic_augstate)
 
 
         toc = time.time()
