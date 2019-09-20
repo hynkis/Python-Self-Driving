@@ -11,6 +11,7 @@ Python MPC
 import osqp
 import numpy as np
 import scipy as sp
+import scipy.linalg
 import scipy.sparse as sparse
 
 import matplotlib.pyplot as plt
@@ -23,6 +24,8 @@ try:
     from visualization_vehicle import plot_car
 except:
     raise
+
+VISUALIZE_PLOT = False
 
 def nearest_point(path_x, path_y, x, y, look_ind=0):
     min_d = np.inf
@@ -318,28 +321,48 @@ def mpc_increment(Ad_list, Bd_list, gd_list, x_tilda_vec, Xr, pred_x_tilda, pred
     # Augmentation for Incremental Control
     Ad_sys = Ad_list[0]
     Bd_sys = Bd_list[0]
-    Aug_A_sys = np.hstack([Ad_sys, Bd_sys])
-    Aug_A_increment = sparse.hstack([sparse.csr_matrix((nu, nx)), sparse.eye(nu)])
-    Ad_tilda = sparse.vstack([Aug_A_sys, Aug_A_increment])
-    Bd_tilda = sparse.vstack([Bd_sys, sparse.eye(nu)])
+    # Aug_A_sys = np.hstack([Ad_sys, Bd_sys])
+    # Aug_A_increment = sparse.hstack([sparse.csr_matrix((nu, nx)), sparse.eye(nu)])
+    # Ad_tilda = sparse.vstack([Aug_A_sys, Aug_A_increment])
+    # Bd_tilda = sparse.vstack([Bd_sys, sparse.eye(nu)])
+    
+    # Ax_Ad = sparse.csc_matrix(Ad_tilda)
+    # Ax_diag = sparse.kron(sparse.eye(N+1),-sparse.eye(nx+nu))
+    # Bu_Bd = sparse.csc_matrix(Bd_tilda)
 
-    Ax_Ad = sparse.csc_matrix(Ad_tilda)
+    Aug_A_sys = np.hstack([Ad_sys, Bd_sys])
+    Aug_A_increment = np.hstack([np.zeros((nu, nx)), np.eye(nu)])
+    Ad_tilda = np.vstack([Aug_A_sys, Aug_A_increment])
+    Bd_tilda = np.vstack([Bd_sys, np.eye(nu)])
+
+    Ax_Ad = Ad_tilda
     Ax_diag = sparse.kron(sparse.eye(N+1),-sparse.eye(nx+nu))
-    Bu_Bd = sparse.csc_matrix(Bd_tilda)
+    Bu_Bd = Bd_tilda
 
     for i in range(N-1):
         Ad_sys = Ad_list[i+1]
         Bd_sys = Bd_list[i+1]
-        Aug_A_sys = np.hstack([Ad_sys, Bd_sys])
-        Aug_A_increment = sparse.hstack([sparse.csr_matrix((nu, nx)), sparse.eye(nu)])
-        Ad_tilda = sparse.vstack([Aug_A_sys, Aug_A_increment])
-        Bd_tilda = sparse.vstack([Bd_sys, sparse.eye(nu)])
+        # Aug_A_sys = np.hstack([Ad_sys, Bd_sys])
+        # Aug_A_increment = sparse.hstack([sparse.csr_matrix((nu, nx)), sparse.eye(nu)])
+        # Ad_tilda = sparse.vstack([Aug_A_sys, Aug_A_increment])
+        # Bd_tilda = sparse.vstack([Bd_sys, sparse.eye(nu)])
 
-        Ax_Ad = sparse.block_diag([Ax_Ad, Ad_tilda])
-        Bu_Bd = sparse.block_diag([Bu_Bd, Bd_tilda])
+        # Ax_Ad = sparse.block_diag([Ax_Ad, Ad_tilda])
+        # Bu_Bd = sparse.block_diag([Bu_Bd, Bd_tilda])
+        Aug_A_sys = np.hstack([Ad_sys, Bd_sys])
+        Aug_A_increment = np.hstack([np.zeros((nu, nx)), np.eye(nu)])
+        Ad_tilda = np.vstack([Aug_A_sys, Aug_A_increment])
+        Bd_tilda = np.vstack([Bd_sys, np.eye(nu)])
+
+        Ax_Ad = scipy.linalg.block_diag(Ax_Ad, Ad_tilda)
+        Bu_Bd = scipy.linalg.block_diag(Bu_Bd, Bd_tilda)
+
+    Ax_Ad = sparse.csc_matrix(Ax_Ad)
+    Bu_Bd = sparse.csc_matrix(Bu_Bd)
 
     Ax_Ad_top = sparse.kron(np.ones(N+1), np.zeros((nx+nu, nx+nu)))
     Ax_Ad_side = sparse.kron(np.ones((N,1)), np.zeros((nx+nu, nx+nu)))
+    # Ax = Ax_diag + sparse.vstack([Ax_Ad_top, sparse.hstack([Ax_Ad, Ax_Ad_side])])
     Ax = Ax_diag + sparse.vstack([Ax_Ad_top, sparse.hstack([Ax_Ad, Ax_Ad_side])])
     Bu_Bd_top = sparse.kron(np.ones(N), np.zeros((nx+nu, nu)))
     Bu = sparse.vstack([Bu_Bd_top, Bu_Bd])
@@ -524,7 +547,7 @@ def main():
         #     pred_x_tilda = iter_damping * pred_x_tilda + (1 - iter_damping) * pred_x_tilda_up
         #     pred_del_u = iter_damping * pred_del_u + (1 - iter_damping) * pred_del_u_up
 
-        toc = time.time()
+        
 
         # Plot
         print("Current   x :", x_tilda[0], "y :", x_tilda[1], "yaw :", x_tilda[2], "vx :", x_tilda[3], "vy :", x_tilda[4], "yawrate :", x_tilda[5])
@@ -533,23 +556,24 @@ def main():
         print("------------------------------------------------------------")
         print("steer :", x_tilda[6], "accel :", x_tilda[7])
 
-        print("Process time :", toc - tic)
+        
 
         # Save current state
         plt_states[:,i] = x_tilda[:-nu].T
         plt_actions[:,i] = x_tilda[-nu:].T
 
-        plt.cla()
-        plt.plot(path_x, path_y, label="Path")
-        plt.plot(Xr[0,:], Xr[1,:], "g", label="Local Reference")
-        plt.plot(plt_states[0,:i+1], plt_states[1,:i+1], "-b", label="Drived") # plot from 0 to i
-        plt.grid(True)
-        plt.axis("equal")
-        # plot_car(x[0], x[1], vehicle_models.normalize_angle(x[2]), steer=u[0]) # plotting w.r.t. rear axle.
-        plot_car(x_tilda[0], x_tilda[1], vehicle_models.normalize_angle(x_tilda[2]), steer=x_tilda[6]) # plotting w.r.t. rear axle.
-        plt.plot(pred_x_tilda[0,:], pred_x_tilda[1,:], "r", label="Predictive States")
-        
-        plt.pause(0.001)
+        if VISUALIZE_PLOT:
+            plt.cla()
+            plt.plot(path_x, path_y, label="Path")
+            plt.plot(Xr[0,:], Xr[1,:], "g", label="Local Reference")
+            plt.plot(plt_states[0,:i+1], plt_states[1,:i+1], "-b", label="Drived") # plot from 0 to i
+            plt.grid(True)
+            plt.axis("equal")
+            # plot_car(x[0], x[1], vehicle_models.normalize_angle(x[2]), steer=u[0]) # plotting w.r.t. rear axle.
+            plot_car(x_tilda[0], x_tilda[1], vehicle_models.normalize_angle(x_tilda[2]), steer=x_tilda[6]) # plotting w.r.t. rear axle.
+            plt.plot(pred_x_tilda[0,:], pred_x_tilda[1,:], "r", label="Predictive States")
+            
+            plt.pause(0.001)
         
         # Update States
         u_past = x_tilda[-nu:]
@@ -595,6 +619,9 @@ def main():
         # if check_goal(x, xr, goal_dist=1, stop_speed=5):
         #     print("Goal")
         #     break
+
+        toc = time.time()
+        print("Process time :", toc - tic)
     
 if __name__ == "__main__":
     main()
