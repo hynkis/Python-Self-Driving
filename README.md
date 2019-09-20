@@ -3,4 +3,4 @@ Python based Self Driving Algorithm
 
 * Vehicle Dynamics
 
-* MPC
+* MPC (FPS 55Hz without visualization)
