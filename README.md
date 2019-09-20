@@ -2,4 +2,6 @@
 Python based Self Driving Algorithm
 
 Vehicle Dynamics
+----------------
 MPC
+---
